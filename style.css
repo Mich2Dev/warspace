@@ -1,0 +1,194 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #000;
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+#loading-screen {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    background-color: #050510;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #00ffff;
+    font-size: 24px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.loading-bar-container {
+    width: 400px;
+    height: 15px;
+    background: #111;
+    margin-top: 20px;
+    border: 2px solid #00ffff;
+    box-shadow: 0 0 10px #00ffff;
+}
+
+#loading-bar {
+    width: 0%;
+    height: 100%;
+    background: #00ffff;
+    transition: width 0.1s;
+}
+
+#ui {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 10;
+    display: flex;
+    justify-content: space-between;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+#player-status, #target-status {
+    background: rgba(0, 15, 30, 0.7);
+    border: 1px solid #00aaff;
+    padding: 15px;
+    border-radius: 5px;
+    width: 250px;
+    height: fit-content;
+    box-shadow: 0 0 10px rgba(0, 170, 255, 0.3);
+}
+
+#player-status h2, #target-status h2 {
+    margin: 0 0 10px 0;
+    font-size: 16px;
+    color: #00ffff;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+#target-status {
+    border-color: #ff3333;
+    box-shadow: 0 0 10px rgba(255, 50, 50, 0.3);
+}
+#target-status h2 {
+    color: #ff5555;
+}
+
+.bar-container {
+    width: 100%;
+    height: 12px;
+    background: #111;
+    border: 1px solid #333;
+    margin-bottom: 8px;
+    position: relative;
+}
+
+.bar {
+    height: 100%;
+    width: 100%;
+    transition: width 0.2s;
+}
+
+.hp { background: linear-gradient(90deg, #aa0000, #ff3333); }
+.energy { background: linear-gradient(90deg, #0055aa, #00aaff); }
+
+#combat-log {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.5);
+    padding: 10px 20px;
+    border: 1px solid #555;
+    color: #ccc;
+    font-size: 14px;
+}
+
+#minimap {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 200px;
+    height: 200px;
+    background: rgba(0, 20, 40, 0.6);
+    border: 2px solid #00aaff;
+    border-radius: 50%; 
+    box-shadow: 0 0 15px rgba(0, 170, 255, 0.4);
+    overflow: hidden;
+    pointer-events: auto; /* IMPORTANTE: Permite hacer click */
+    cursor: crosshair;
+}
+
+.minimap-bg {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+    background: 
+        radial-gradient(circle, transparent 40%, rgba(0, 170, 255, 0.2) 100%),
+        repeating-radial-gradient(circle, transparent, transparent 20px, rgba(0, 170, 255, 0.2) 21px);
+    border-radius: 50%;
+}
+
+#minimap-player {
+    position: absolute;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 10px solid #00ffff; /* Triángulo Cian */
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    filter: drop-shadow(0 0 5px #00ffff);
+    transform-origin: 50% 50%;
+    z-index: 2;
+}
+
+#minimap-enemies {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.minimap-enemy {
+    position: absolute;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none; /* Las balas y clicks pasan a través de ellos hacia el mapa */
+}
+
+.minimap-drone {
+    width: 3px; height: 3px;
+    background: #00ff00;
+    box-shadow: 0 0 4px #00ff00;
+    z-index: 10;
+}
+
+.minimap-fighter {
+    width: 5px; height: 5px;
+    background: #ffaa00;
+    box-shadow: 0 0 6px #ffaa00;
+    z-index: 10;
+}
+
+.minimap-boss {
+    width: 8px; height: 8px;
+    background: #ff0000;
+    box-shadow: 0 0 10px #ff0000;
+    z-index: 1;
+}

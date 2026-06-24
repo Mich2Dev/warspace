@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WarSpace</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div id="loading-screen">
+        <div id="loading-text">Loading Assets: 0%</div>
+        <div class="loading-bar-container">
+            <div id="loading-bar"></div>
+        </div>
+    </div>
+    
+    <div id="ui" style="display: none;">
+        <div id="player-status">
+            <h2>PLAYER SHIP</h2>
+            <div class="bar-container"><div id="hp-bar" class="bar hp"></div></div>
+            <div class="bar-container"><div id="energy-bar" class="bar energy"></div></div>
+        </div>
+        <div id="target-status" style="display: none;">
+            <h2>Target: <span id="target-name">None</span></h2>
+            <div class="bar-container"><div id="target-hp-bar" class="bar hp"></div></div>
+        </div>
+        <div id="combat-log">Ready. WASD to move. Click enemy to target, SPACE to shoot.</div>
+        
+        <div id="minimap">
+            <div class="minimap-bg"></div>
+            <div id="minimap-player"></div>
+            <div id="minimap-enemies"></div>
+        </div>
+    </div>
+    <script type="module" src="/src/game.js"></script>
+</body>
+</html>
