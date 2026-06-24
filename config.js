@@ -13,6 +13,7 @@ export const CONFIG = {
 
         // Tamaños de Fighters (Las naves crucero y sus bases)
         FIGHTER_SCALE: 4.0,
+        DROID_SCALE: 25.0, // Tamaño específico para los Droids escolta del Cruiser
         FIGHTER_RING_SIZE: 150,
         FIGHTER_BOX_SIZE: 200,
         FIGHTER_SPAWNER_RING: 200,
@@ -25,6 +26,14 @@ export const CONFIG = {
         ZONA1_SPAWNER_RING: 100,
         ZONA1_SPAWNER_BOX: 250,
         ZONA1_BASE_SCALE: 10.0,
+
+        // Tamaños de Zona 3 (Patrulla Móvil)
+        ZONA3_SCALE: 5.0,
+        ZONA3_RING_SIZE: 70,
+        ZONA3_BOX_SIZE: 80,
+        ZONA3_SPAWNER_RING: 150,
+        ZONA3_SPAWNER_BOX: 400,
+        ZONA3_BASE_SCALE: 15.0,
 
         // Tamaños de Bots Carroñeros (Zona 2)
         ZONA2_SCALE: 6.0,
@@ -62,10 +71,10 @@ export const CONFIG = {
         DRONE_FIRE_RATE: 2.5,
         DRONE_DAMAGE: 5,
 
-        // Fighters (Cazas Rápidos)
+        // Fighters (Cazas Rápidos / Droides)
         FIGHTER_HP: 200,
-        FIGHTER_SPEED: 100,
-        FIGHTER_AGGRO_DIST: 800,
+        FIGHTER_SPEED: 350, // Aumentada velocidad para poder alcanzar al jugador
+        FIGHTER_AGGRO_DIST: 5000, // Aumentada radicalmente para que persigan mucho tiempo
         FIGHTER_ATTACK_DIST: 600,
         FIGHTER_FIRE_RATE: 1.5,
         FIGHTER_DAMAGE: 10,
@@ -81,10 +90,18 @@ export const CONFIG = {
         // Enemigos Carroñeros (Zona 2) - Más rápidos pero frágiles
         ZONA2_HP: 120,
         ZONA2_SPEED: 220,
-        ZONA2_AGGRO_DIST: 1000, 
-        ZONA2_ATTACK_DIST: 400,
-        ZONA2_FIRE_RATE: 1.2,
+        ZONA2_AGGRO_DIST: 2000, 
+        ZONA2_ATTACK_DIST: 250,
+        ZONA2_FIRE_RATE: 1.0,
         ZONA2_DAMAGE: 8,
+
+        // Enemigos Escolta de Zona 3
+        ZONA3_HP: 180,
+        ZONA3_SPEED: 250,
+        ZONA3_AGGRO_DIST: 2000,
+        ZONA3_ATTACK_DIST: 600,
+        ZONA3_FIRE_RATE: 1.2,
+        ZONA3_DAMAGE: 20,
 
         // Boss (Olympic Carrier)
         BOSS_HP: 10000,
@@ -100,8 +117,9 @@ export const CONFIG = {
         DRONE: { x: 4000, z: -4000, radius: 1500 },
         FIGHTER: { x: -5000, z: -5000, radius: 2000 },
         BOSS: { x: 0, z: -9000, radius: 3000 },
-        ZONA1: { x: -4000, z: 4000, radius: 2000 }, // Nueva zona al Suroeste
-        ZONA2: { x: 4000, z: 4000, radius: 2500 }   // Zona de Carroñeros al Sureste
+        ZONA1: { x: -4000, z: 4000, radius: 2000 },
+        ZONA2: { x: 4000, z: 4000, radius: 2500 },
+        ZONA3: { x: -8000, z: 1000, radius: 2000 }
     },
 
     // Ajustes Visuales

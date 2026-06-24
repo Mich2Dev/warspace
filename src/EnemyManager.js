@@ -133,10 +133,37 @@ class Spawner extends BaseEnemy {
     update(delta, environment, player, time) {
         this.spawnedUnits = this.spawnedUnits.filter(u => u.userData.hp > 0);
         
-        // Ajustar altura de la colmena al terreno para que no quede enterrada
-        if (environment) {
-            const h = environment.getHeightAt(this.position.x, this.position.z);
-            this.position.y = Math.max(0, h) + 35;
+        if (this.userData.maxSpeed > 0) {
+            // === LÓGICA DE BASE MÓVIL ===
+            // Deambula por el mapa libremente. Cambia de dirección aleatoriamente 0.5% de las veces
+            // o si choca contra una montaña (la velocidad baja a casi 0)
+            if (Math.random() < 0.005 || this.userData.velocity.lengthSq() < 0.1) {
+                const angle = Math.random() * Math.PI * 2;
+                this.userData.velocity.set(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(this.userData.maxSpeed);
+            }
+            this.updateBasePhysics(delta, environment, time);
+            
+            // Fuerza a que la base se mantenga más alta que el terreno para sobrevolarlo
+            if (environment && this.userData._cachedTerrainH !== undefined) {
+                this.position.y = Math.max(this.position.y, this.userData._cachedTerrainH + 80);
+            }
+            
+            // Rota la base para que mire hacia donde se mueve
+            if (this.userData.velocity.lengthSq() > 0.1) {
+                const lookTarget = this.position.clone().add(this.userData.velocity);
+                lookTarget.y = this.position.y;
+                const currentQuat = this.quaternion.clone();
+                this.lookAt(lookTarget);
+                const targetQuat = this.quaternion.clone();
+                this.quaternion.copy(currentQuat).slerp(targetQuat, 2 * delta);
+            }
+        } else {
+            // === LÓGICA DE BASE ESTÁTICA ===
+            // Ajustar altura de la colmena al terreno para que no quede enterrada
+            if (environment) {
+                const h = environment.getHeightAt(this.position.x, this.position.z);
+                this.position.y = Math.max(0, h) + 35;
+            }
         }
         
         if (this.spawnedUnits.length < this.maxUnits && time - this.lastSpawnTime > this.spawnRate) {
@@ -221,6 +248,12 @@ class MobileEnemy extends BaseEnemy {
                 
                 if (desiredVel.lengthSq() > 0.001) desiredVel.normalize();
                 this.userData.velocity.lerp(desiredVel.multiplyScalar(patrolSpeed), 0.05);
+            } else {
+                // LÓGICA DE DEAMBULAR LIBRE (Boss solitario que navega el mundo)
+                if (Math.random() < 0.01 || this.userData.velocity.lengthSq() < 0.1) {
+                    const angle = Math.random() * Math.PI * 2;
+                    this.userData.velocity.set(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(this.userData.maxSpeed * 0.4);
+                }
             }
         }
 
@@ -231,21 +264,30 @@ class MobileEnemy extends BaseEnemy {
                 let minRad = this.userData.type === 'Boss' ? 400 : 120;
                 let minDistSq = minRad * minRad;
                 if (distSq < minDistSq && distSq > 0.1) {
-                    const repelDir = new THREE.Vector3().subVectors(this.position, other.position).normalize();
+                    const repelDir = new THREE.Vector3().subVectors(this.position, other.position);
+                    repelDir.y = 0; // Solo repulsión horizontal
+                    repelDir.normalize();
                     const force = (minDistSq - distSq) / minDistSq; 
                     separation.addScaledVector(repelDir, force * 250);
                 }
             }
         }
         this.userData.velocity.add(separation.multiplyScalar(delta));
+        this.userData.velocity.y = 0; // Prevenir cualquier velocidad vertical acumulada
 
         if (this.userData.velocity.lengthSq() > 0.1) {
-            const lookTarget = this.position.clone().add(this.userData.velocity);
+            // Proyectar el punto de mirada 50 metros adelante para suavizar la rotación vertical
+            const lookDir = this.userData.velocity.clone().normalize().multiplyScalar(50);
+            const lookTarget = this.position.clone().add(lookDir);
+            
             if (environment) {
                 const forwardTerrain = environment.getHeightAt(lookTarget.x, lookTarget.z);
                 let hoverDist = 35; 
+                if (this.userData.type && this.userData.type.includes('Boss')) hoverDist = 150;
+                if (this.userData.type && this.userData.type.includes('Zona3')) hoverDist = 100;
                 lookTarget.y = Math.max(hoverDist, forwardTerrain + hoverDist);
             }
+            
             const currentQuat = this.quaternion.clone();
             this.lookAt(lookTarget);
             const targetQuat = this.quaternion.clone();
@@ -304,6 +346,9 @@ export class EnemyManager {
         const z1Mat = new THREE.MeshStandardMaterial({ color: 0x00ff00, metalness: 0.8, roughness: 0.5 });
         const z1Core = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 5), z1Mat);
         this.zona1Group.add(z1Core);
+        
+        this.zona3Group = new THREE.Group();
+        this.zona3Group.add(new THREE.Mesh(new THREE.BoxGeometry(4,4,4), new THREE.MeshStandardMaterial({ color: 0xff00ff })));
     }
 
     initStandardSpawners() {
@@ -313,25 +358,37 @@ export class EnemyManager {
         // Spawners con modelos geométricos        // Cantidades reducidas para mantener FPS alto
         this.createSpawner('DroneSpawner', 'HIVE NEST', 500, 'Drone', 8, 5.0, CONFIG.ZONES.DRONE, this.droneGroup, minimapContainer, 'minimap-boss');
         this.createSpawner('FighterSpawner', 'COMMAND BASE', 800, 'Fighter', 6, 6.0, CONFIG.ZONES.FIGHTER, this.fighterGroup, minimapContainer, 'minimap-boss');
-        this.createSpawner('BossSpawner', 'MOTHERSHIP', 5000, 'Boss', 2, 15.0, CONFIG.ZONES.BOSS, this.bossGroup, minimapContainer, 'minimap-boss');
+        
+        // El Boss ya no tiene Spawner, se instanciará como una unidad suelta cuando cargue su GLTF
         
         // Zona 1 y Zona 2: sus Spawners se crean aquí (sin bots), los BOTS se crean después del GLTF
         const minimap = document.getElementById('minimap-enemies');
         const z1Spawner = new Spawner(this, 'Zona1Spawner', 'ZONA 1 BASE', 1500, 'Zona1', 8, 6.0);
         z1Spawner.setupVisuals(null, CONFIG.VISUALS.ZONA1_SPAWNER_RING, CONFIG.VISUALS.ZONA1_SPAWNER_BOX);
+        z1Spawner.position.set(CONFIG.ZONES.ZONA1.x, 35, CONFIG.ZONES.ZONA1.z); // Set position FIRST
         z1Spawner.createMinimapDot(minimap, 'minimap-boss');
-        z1Spawner.position.set(CONFIG.ZONES.ZONA1.x, 35, CONFIG.ZONES.ZONA1.z);
         this.scene.add(z1Spawner);
         this.enemies.push(z1Spawner);
         this.zona1Spawner = z1Spawner;
 
         const z2Spawner = new Spawner(this, 'Zona2Spawner', 'SCAVENGER NEST', 1200, 'Zona2', 8, 5.0);
         z2Spawner.setupVisuals(null, CONFIG.VISUALS.ZONA2_SPAWNER_RING, CONFIG.VISUALS.ZONA2_SPAWNER_BOX);
+        z2Spawner.position.set(CONFIG.ZONES.ZONA2.x, 35, CONFIG.ZONES.ZONA2.z); // Set position FIRST
         z2Spawner.createMinimapDot(minimap, 'minimap-boss');
-        z2Spawner.position.set(CONFIG.ZONES.ZONA2.x, 35, CONFIG.ZONES.ZONA2.z);
         this.scene.add(z2Spawner);
         this.enemies.push(z2Spawner);
         this.zona2Spawner = z2Spawner;
+        
+        // ZONA 3: Base de Patrulla Móvil
+        const z3Spawner = new Spawner(this, 'Zona3Spawner', 'MOBILE PATROL BASE', 2500, 'Zona3', 6, 6.0);
+        z3Spawner.userData.maxSpeed = 50; 
+        z3Spawner.userData.velocity = new THREE.Vector3(1, 0, 1).normalize().multiplyScalar(50);
+        z3Spawner.setupVisuals(null, CONFIG.VISUALS.ZONA3_SPAWNER_RING, CONFIG.VISUALS.ZONA3_SPAWNER_BOX);
+        z3Spawner.position.set(CONFIG.ZONES.ZONA3.x, 150, CONFIG.ZONES.ZONA3.z); // Set position FIRST
+        z3Spawner.createMinimapDot(minimap, 'minimap-boss');
+        this.scene.add(z3Spawner);
+        this.enemies.push(z3Spawner);
+        this.zona3Spawner = z3Spawner;
     }
 
     createSpawner(type, name, hp, spawnType, maxUnits, spawnRate, zone, template, minimapContainer, minimapClass) {
@@ -339,8 +396,8 @@ export class EnemyManager {
         const ringSize = CONFIG.VISUALS[spawnType.toUpperCase() + '_SPAWNER_RING'];
         const boxSize = CONFIG.VISUALS[spawnType.toUpperCase() + '_SPAWNER_BOX'];
         spawner.setupVisuals(template, ringSize, boxSize);
+        spawner.position.set(zone.x, 35, zone.z); // Set position FIRST
         spawner.createMinimapDot(minimapContainer, minimapClass);
-        spawner.position.set(zone.x, 35, zone.z);
         this.scene.add(spawner);
         this.enemies.push(spawner);
 
@@ -366,6 +423,9 @@ export class EnemyManager {
         } else if (spawnType === 'Zona2') {
             hp = CONFIG.COMBAT.ZONA2_HP; speed = CONFIG.COMBAT.ZONA2_SPEED; name = 'SCAVENGER BOT';
             template = this.zona2Group; minimapClass = 'minimap-drone';
+        } else if (spawnType === 'Zona3') {
+            hp = CONFIG.COMBAT.ZONA3_HP; speed = CONFIG.COMBAT.ZONA3_SPEED; name = 'ZONA3 PATROL';
+            template = this.zona3Group; minimapClass = 'minimap-fighter';
         } else {
             hp = CONFIG.COMBAT.BOSS_HP; speed = CONFIG.COMBAT.BOSS_SPEED; name = 'OLYMPIC CARRIER';
             template = this.bossGroup; minimapClass = 'minimap-boss';
@@ -431,6 +491,7 @@ export class EnemyManager {
         this.gltfLoader.load('/models/zona1/enemi1.glb', (gltf) => {
             const enemiModel = gltf.scene;
             enemiModel.scale.set(CONFIG.VISUALS.ZONA1_SCALE, CONFIG.VISUALS.ZONA1_SCALE, CONFIG.VISUALS.ZONA1_SCALE);
+            enemiModel.rotation.y = Math.PI; // Rotar 180 grados para que miren hacia adelante
             enemiModel.traverse(c => { if(c.isMesh) { c.castShadow=true; c.receiveShadow=true; c.frustumCulled=false; }});
             this.zona1Group = enemiModel;
             // Ahora que el modelo existe, spawneamos los bots
@@ -454,41 +515,86 @@ export class EnemyManager {
             }
         });
 
-        // Cargar Cazas
+        // Modelos de la Zona 3 (Base Móvil y Escoltas)
+        this.gltfLoader.load('/models/zona3/base3.glb', (gltf) => {
+            const model = gltf.scene;
+            model.scale.set(CONFIG.VISUALS.ZONA3_BASE_SCALE, CONFIG.VISUALS.ZONA3_BASE_SCALE, CONFIG.VISUALS.ZONA3_BASE_SCALE);
+            model.traverse(c => { if(c.isMesh) { c.castShadow=true; c.receiveShadow=true; c.frustumCulled=false; }});
+            if (this.zona3Spawner) {
+                this.zona3Spawner.visualGroup.clear();
+                this.zona3Spawner.visualGroup.add(model.clone());
+            }
+        });
+
+        this.gltfLoader.load('/models/zona3/enemi3.glb', (gltf) => {
+            const model = gltf.scene;
+            model.scale.set(CONFIG.VISUALS.ZONA3_SCALE, CONFIG.VISUALS.ZONA3_SCALE, CONFIG.VISUALS.ZONA3_SCALE);
+            model.traverse(c => { if(c.isMesh) { c.castShadow=true; c.receiveShadow=true; c.frustumCulled=false; }});
+            this.zona3Group = model; // Actualizar template
+            
+            this.enemies.forEach(e => {
+                if (e.userData.type === 'Zona3' && !(e instanceof Spawner)) {
+                    e.visualGroup.clear();
+                    e.visualGroup.add(SkeletonUtils.clone(model));
+                }
+            });
+            // Hacemos el spawn del escuadrón completo de una vez cuando carga el modelo
+            if (this.zona3Spawner) {
+                for(let i=0; i < this.zona3Spawner.maxUnits; i++) {
+                    this.spawnUnitFromSpawner(this.zona3Spawner);
+                }
+            }
+        });
+
+        // Cargar Base Cruiser (solo para el Spawner)
         this.gltfLoader.load('/models/evil/stargate__bc-303.glb', (gltf) => {
             const model = gltf.scene;
-            model.scale.set(CONFIG.VISUALS.FIGHTER_SCALE, CONFIG.VISUALS.FIGHTER_SCALE, CONFIG.VISUALS.FIGHTER_SCALE); 
+            const baseScale = CONFIG.VISUALS.FIGHTER_SCALE * CONFIG.VISUALS.SPAWNER_SCALE_MULTIPLIER;
+            model.scale.set(baseScale, baseScale, baseScale); 
             model.rotation.y = 0; 
             model.traverse(c => { if(c.isMesh) { c.castShadow=true; c.receiveShadow=true; c.frustumCulled=false; }});
             
-            this.fighterGroup = model;
             this.enemies.forEach(e => {
-                if (e.userData.type === 'Fighter' || e.spawnType === 'Fighter') {
+                if (e instanceof Spawner && e.spawnType === 'Fighter') {
                     e.visualGroup.clear();
-                    let clone = SkeletonUtils.clone(model);
-                    if (e instanceof Spawner) clone.scale.multiplyScalar(CONFIG.VISUALS.SPAWNER_SCALE_MULTIPLIER);
-                    e.visualGroup.add(clone);
+                    e.visualGroup.add(SkeletonUtils.clone(model));
                 }
             });
-        }, undefined, (err) => console.log("Using fallback for Fighters."));
+        }, undefined, (err) => console.log("Using fallback for Cruiser Base."));
 
-        // Cargar Boss
-        this.gltfLoader.load('/models/evil/bsg__olympic_carrier.glb', (gltf) => {
+        // Cargar Droids (para las naves que spawnea el Cruiser)
+        this.gltfLoader.load('/models/evil/droid.glb', (gltf) => {
+            const model = gltf.scene;
+            model.scale.set(CONFIG.VISUALS.DROID_SCALE, CONFIG.VISUALS.DROID_SCALE, CONFIG.VISUALS.DROID_SCALE); 
+            model.traverse(c => { if(c.isMesh) { c.castShadow=true; c.receiveShadow=true; c.frustumCulled=false; }});
+            
+            this.fighterGroup = model; // Actualizar template
+            this.enemies.forEach(e => {
+                if (e.userData.type === 'Fighter' && !(e instanceof Spawner)) {
+                    e.visualGroup.clear();
+                    e.visualGroup.add(SkeletonUtils.clone(model));
+                }
+            });
+        }, undefined, (err) => console.log("Using fallback for Droids."));
+
+        // Cargar Boss (Loky solitario que patrulla sin base)
+        this.gltfLoader.load('/models/enemis_map/loky.glb', (gltf) => {
             const model = gltf.scene;
             model.scale.set(CONFIG.VISUALS.BOSS_SCALE, CONFIG.VISUALS.BOSS_SCALE, CONFIG.VISUALS.BOSS_SCALE); 
             model.rotation.y = 0; 
             model.traverse(c => { if(c.isMesh) { c.castShadow=true; c.receiveShadow=true; c.frustumCulled=false; }});
             
-            this.bossGroup = model;
-            this.enemies.forEach(e => {
-                if (e.userData.type === 'Boss' || e.spawnType === 'Boss') {
-                    e.visualGroup.clear();
-                    let clone = SkeletonUtils.clone(model);
-                    if (e instanceof Spawner) clone.scale.multiplyScalar(CONFIG.VISUALS.SPAWNER_SCALE_MULTIPLIER);
-                    e.visualGroup.add(clone);
-                }
-            });
-        }, undefined, (err) => console.log("Using fallback for Bosses."));
+            this.bossGroup = model; // Actualizar template
+            
+            // Instanciar un único Boss
+            const boss = new MobileEnemy(this, 'Boss', 'LOKY', CONFIG.COMBAT.BOSS_HP, CONFIG.COMBAT.BOSS_SPEED);
+            boss.setupVisuals(this.bossGroup, CONFIG.VISUALS.BOSS_RING_SIZE, CONFIG.VISUALS.BOSS_BOX_SIZE);
+            boss.position.set(CONFIG.ZONES.BOSS.x, 150, CONFIG.ZONES.BOSS.z);
+            boss.createMinimapDot(document.getElementById('minimap-enemies'), 'minimap-boss');
+            
+            this.scene.add(boss);
+            this.enemies.push(boss);
+        }, undefined, (err) => console.log("Using fallback for Boss."));
     }
 
     update(delta, environment) {
@@ -522,6 +628,40 @@ export class EnemyManager {
 
     takeDamage(enemy, amount) {
         enemy.userData.hp -= amount;
+        
+        if (enemy.userData.hp > 0) {
+            // Impacto visual (chispa)
+            this.createExplosion(enemy.position, 0.2);
+            
+            // Flash rojo
+            if (!enemy.userData.hasUniqueMaterial) {
+                enemy.visualGroup.traverse(c => {
+                    if (c.isMesh && c.material) {
+                        c.material = c.material.clone();
+                    }
+                });
+                enemy.userData.hasUniqueMaterial = true;
+            }
+            if (!enemy.userData.isBlinking) {
+                enemy.userData.isBlinking = true;
+                const prevEmissive = [];
+                enemy.visualGroup.traverse(c => {
+                    if (c.isMesh && c.material && c.material.emissive) {
+                        prevEmissive.push({ mesh: c, color: c.material.emissive.getHex() });
+                        c.material.emissive.setHex(0xff5555);
+                    }
+                });
+                setTimeout(() => {
+                    prevEmissive.forEach(item => {
+                        if (item.mesh && item.mesh.material) {
+                            item.mesh.material.emissive.setHex(item.color);
+                        }
+                    });
+                    if (enemy.userData) enemy.userData.isBlinking = false;
+                }, 100);
+            }
+        }
+
         if (enemy.userData.hp <= 0) {
             let explosionScale = 1.0;
             if (enemy.userData.type === 'Fighter') explosionScale = 2.5;
@@ -597,6 +737,7 @@ export class EnemyManager {
                 if (typeof this.player.takeDamage === 'function') {
                     this.player.takeDamage(laser.userData.damage);
                 }
+                this.createExplosion(laser.position, 0.5); // Impacto visual en el jugador
                 this.scene.remove(laser);
                 this.enemyLasers.splice(i, 1);
             }

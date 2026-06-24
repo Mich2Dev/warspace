@@ -23,6 +23,7 @@ export class Player {
         this.maxEnergy = 100;
         this.target = null;
         this.navTarget = null; // Coordenada objetivo para el minimapa
+        this.damageShake = 0;
         
         this.lasers = [];
         this.lastShotTime = 0;
@@ -270,6 +271,7 @@ export class Player {
             ui.style.boxShadow = 'inset 0 0 150px rgba(255,0,0,0.8)';
             setTimeout(() => { ui.style.boxShadow = 'none'; }, 200);
         }
+        this.damageShake = 0.3; // Activar el camera shake por 0.3 segundos
 
         if (this.hp <= 0) {
             this.hp = 0;
