@@ -1,125 +1,81 @@
 export const CONFIG = {
     // Ajustes Visuales, Escalas y Tamaños de Selección (Círculos Rojos)
     VISUALS: {
-        PLAYER_SCALE: 2.0,
+        PLAYER_SCALE: 4.0, // Aumentado de 2.0 a 4.0 para que la nave sea mucho más visible
         PLAYER_ROTATION_Y: -Math.PI / 2,
 
-        // Tamaños de Drones (Los bichos pequeños y sus colmenas)
-        DRONE_SCALE: 10.0,
-        DRONE_RING_SIZE: 100,
-        DRONE_BOX_SIZE: 150,
-        DRONE_SPAWNER_RING: 150,
-        DRONE_SPAWNER_BOX: 200,
-
-        // Tamaños de Fighters (Las naves crucero y sus bases)
-        FIGHTER_SCALE: 4.0,
-        DROID_SCALE: 25.0, // Tamaño específico para los Droids escolta del Cruiser
-        FIGHTER_RING_SIZE: 150,
-        FIGHTER_BOX_SIZE: 200,
-        FIGHTER_SPAWNER_RING: 200,
-        FIGHTER_SPAWNER_BOX: 250,
-
         // Tamaños de Zona 1 (Los nuevos robots y su base)
-        ZONA1_SCALE: 20.0,
-        ZONA1_RING_SIZE: 60,
+        ZONA1_SCALE: 30.0, // Aumentado considerablemente
+        ZONA1_RING_SIZE: 50,
         ZONA1_BOX_SIZE: 60,
-        ZONA1_SPAWNER_RING: 100,
-        ZONA1_SPAWNER_BOX: 250,
+        ZONA1_SPAWNER_RING: 60,
+        ZONA1_SPAWNER_BOX: 150,
         ZONA1_BASE_SCALE: 10.0,
 
         // Tamaños de Zona 3 (Patrulla Móvil)
-        ZONA3_SCALE: 5.0,
-        ZONA3_RING_SIZE: 70,
-        ZONA3_BOX_SIZE: 80,
-        ZONA3_SPAWNER_RING: 150,
-        ZONA3_SPAWNER_BOX: 400,
-        ZONA3_BASE_SCALE: 15.0,
+        ZONA3_SCALE: 12.0, // DUPLICADO (Antes 5) para que el Heavy Drone intimide
+        ZONA3_RING_SIZE: 50,
+        ZONA3_BOX_SIZE: 60,
+        ZONA3_SPAWNER_RING: 80,
+        ZONA3_SPAWNER_BOX: 200,
+        ZONA3_BASE_SCALE: 5.0,
 
         // Tamaños de Bots Carroñeros (Zona 2)
-        ZONA2_SCALE: 6.0,
-        ZONA2_RING_SIZE: 60,
-        ZONA2_BOX_SIZE: 80,
-        ZONA2_SPAWNER_RING: 100,
-        ZONA2_SPAWNER_BOX: 150,
-
-        // Tamaños de Jefes (Boss / Mothership)
-        BOSS_SCALE: 5.0,
-        BOSS_RING_SIZE: 250,
-        BOSS_BOX_SIZE: 350,
-        BOSS_SPAWNER_RING: 300,
-        BOSS_SPAWNER_BOX: 400,
+        ZONA2_SCALE: 10.0,
+        ZONA2_RING_SIZE: 40,
+        ZONA2_BOX_SIZE: 50,
+        ZONA2_SPAWNER_RING: 60,
+        ZONA2_SPAWNER_BOX: 100,
 
         // Multiplicador de escala para las Colmenas (Spawners) en comparación a la nave normal
-        SPAWNER_SCALE_MULTIPLIER: 1.5,
-
-        // Escala estática especial para la gran Colmena (Drone Spawner)
-        COLMENA_SCALE: 20.0
+        SPAWNER_SCALE_MULTIPLIER: 1.5
     },
 
     // Estadísticas de Combate
     COMBAT: {
-        PLAYER_MAX_HP: 1000,
+        PLAYER_BASE_HP: 200,
+        PLAYER_BASE_DAMAGE: 5,
         PLAYER_SPEED: 400,
-        NITRO_SPEED_MULTIPLIER: 2.5,
+        PLAYER_ATTACK_DIST: 2500, // Rango de disparo mucho más corto
+        NITRO_SPEED_MULTIPLIER: 5.0,
         NITRO_ENERGY_COST: 15,
 
-        // Drones (Melee / Exploradores)
-        DRONE_HP: 100,
-        DRONE_SPEED: 100,
-        DRONE_AGGRO_DIST: 600,
-        DRONE_ATTACK_DIST: 400,
-        DRONE_FIRE_RATE: 2.5,
-        DRONE_DAMAGE: 5,
-
-        // Fighters (Cazas Rápidos / Droides)
-        FIGHTER_HP: 200,
-        FIGHTER_SPEED: 350, // Aumentada velocidad para poder alcanzar al jugador
-        FIGHTER_AGGRO_DIST: 5000, // Aumentada radicalmente para que persigan mucho tiempo
-        FIGHTER_ATTACK_DIST: 600,
-        FIGHTER_FIRE_RATE: 1.5,
-        FIGHTER_DAMAGE: 10,
-
-        // Droides de Zona 1 (enemi1) - Agresivos y rapidos
+        // Droides de Zona 1 (E1) - Agresivos y rapidos
+        ZONA1_LEVEL: 2,
+        ZONA1_XP_DROP: 20,
         ZONA1_HP: 150,
-        ZONA1_SPEED: 200,
-        ZONA1_AGGRO_DIST: 1500,
+        ZONA1_SPEED: 140, // Balanceado
+        ZONA1_AGGRO_DIST: 1000,
         ZONA1_ATTACK_DIST: 400,
         ZONA1_FIRE_RATE: 1.5,
         ZONA1_DAMAGE: 12,
 
         // Enemigos Carroñeros (Zona 2) - Más rápidos pero frágiles
+        ZONA2_LEVEL: 4,
+        ZONA2_XP_DROP: 50,
         ZONA2_HP: 120,
-        ZONA2_SPEED: 220,
-        ZONA2_AGGRO_DIST: 2000, 
+        ZONA2_SPEED: 180, // Balanceado
+        ZONA2_AGGRO_DIST: 1000, 
         ZONA2_ATTACK_DIST: 250,
         ZONA2_FIRE_RATE: 1.0,
         ZONA2_DAMAGE: 8,
 
         // Enemigos Escolta de Zona 3
+        ZONA3_LEVEL: 6,
+        ZONA3_XP_DROP: 100,
         ZONA3_HP: 180,
         ZONA3_SPEED: 250,
-        ZONA3_AGGRO_DIST: 2000,
+        ZONA3_AGGRO_DIST: 1200,
         ZONA3_ATTACK_DIST: 600,
         ZONA3_FIRE_RATE: 1.2,
-        ZONA3_DAMAGE: 20,
-
-        // Boss (Olympic Carrier)
-        BOSS_HP: 10000,
-        BOSS_SPEED: 80,
-        BOSS_AGGRO_DIST: 1500,
-        BOSS_ATTACK_DIST: 1000,
-        BOSS_FIRE_RATE: 1.0,
-        BOSS_DAMAGE: 20
+        ZONA3_DAMAGE: 20
     },
 
     // ZONES: Zonas específicas para los Spawners en el Laberinto
     ZONES: {
-        DRONE: { x: 4000, z: -4000, radius: 1500 },
-        FIGHTER: { x: -5000, z: -5000, radius: 2000 },
-        BOSS: { x: 0, z: -9000, radius: 3000 },
-        ZONA1: { x: -4000, z: 4000, radius: 2000 },
-        ZONA2: { x: 4000, z: 4000, radius: 2500 },
-        ZONA3: { x: -8000, z: 1000, radius: 2000 }
+        ZONA1: { x: -3000, z: 3000, radius: 2000 },
+        ZONA2: { x: 3000, z: 0, radius: 2500 },
+        ZONA3: { x: -4000, z: 0, radius: 2000 }
     },
 
     // Ajustes Visuales

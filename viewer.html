@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GLB Viewer</title>
+    <style>body { margin: 0; background-color: #222; } canvas { display: block; }</style>
+</head>
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const light = new THREE.AmbientLight(0xffffff, 1);
+        scene.add(light);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+        const loader = new THREE.GLTFLoader();
+        // Load the model we just edited
+        loader.load('./public/models/zona2/enemi2.glb', function(gltf) {
+            const model = gltf.scene;
+            
+            // Add a red floor to see where the bottom is
+            const gridHelper = new THREE.GridHelper(100, 100, 0xff0000, 0x444444);
+            scene.add(gridHelper);
+
+            // Center and scale model
+            const box = new THREE.Box3().setFromObject(model);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scale = 10 / maxDim;
+            model.scale.set(scale, scale, scale);
+            
+            // Re-center after scaling
+            box.setFromObject(model);
+            box.getCenter(center);
+            model.position.sub(center);
+            // Put it sitting on the grid
+            model.position.y += Math.abs(box.min.y);
+
+            scene.add(model);
+            
+            camera.position.set(0, 5, 15);
+            camera.lookAt(0, 0, 0);
+            
+            // Slowly rotate it so the video captures all angles
+            function animate() {
+                requestAnimationFrame(animate);
+                model.rotation.y += 0.02;
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate();
+            
+            // Mark as loaded so the subagent knows
+            document.title = "LOADED";
+        }, undefined, function(error) {
+            console.error(error);
+            document.title = "ERROR";
+        });
+    </script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import { Environment } from './Environment.js';
 import { CONFIG } from '../config.js';
 import { Player } from './Player.js';
 import { EnemyManager } from './EnemyManager.js';
+import { MissionManager } from './MissionManager.js';
 
 window.onerror = function(msg, url, line, col, error) {
     const errorDiv = document.createElement('div');
@@ -37,6 +38,9 @@ class Game {
             if (text) text.innerText = `Loading Assets: ${Math.round(progress)}%`;
         };
         this.loadingManager.onLoad = () => {
+            // Precompilar shaders para evitar tirones (stutter) al descubrir enemigos nuevos
+            this.renderer.compile(this.scene, this.camera);
+
             const screen = document.getElementById('loading-screen');
             const ui = document.getElementById('ui');
             if (screen) screen.style.display = 'none';
@@ -46,11 +50,14 @@ class Game {
         this.gltfLoader = new GLTFLoader(this.loadingManager);
 
         this.scene = new THREE.Scene();
-        // Atmósfera Atardecer "Pirate Galaxy" con Niebla Lineal para ver claro de cerca
-        this.scene.background = new THREE.Color(0xffaa77);
-        this.scene.fog = new THREE.Fog(0xffaa77, 3000, 10000); // Empieza a 3000, se vuelve opaca a 10000
+        // Atmósfera de atardecer/crepúsculo natural
+        this.scene.background = new THREE.Color(0x3377aa);
+        this.scene.fog = new THREE.FogExp2(0x3377aa, 0.00025); // Niebla exponencial más suave
 
         this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 4000);
+
+        this.mouse = new THREE.Vector2();
+        this.raycaster = new THREE.Raycaster();
 
         this.renderer = new THREE.WebGLRenderer({ antialias: false }); // Desactivar AA base para el postprocesado
         this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -78,17 +85,34 @@ class Game {
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
-        this.controls.maxPolarAngle = Math.PI / 2 - 0.1; // Don't go below ground
+        this.controls.maxPolarAngle = Math.PI / 2 - 0.05; 
         this.controls.minDistance = 20;
-        this.controls.maxDistance = 1500; // Aumentado (antes 200) para permitir alejar la cámara libremente
+        this.controls.maxDistance = 2500; // Restaurado para permitir alejar la cámara con la rueda del mouse
+        
+        // Pirate Galaxy style: Right click rotates camera, Left click targets
+        this.controls.mouseButtons = {
+            LEFT: THREE.MOUSE.NONE,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.ROTATE
+        };
         // La cámara inicial es controlada por el Player, así que asignamos el target
         this.controls.target.set(0, 50, 4000);
 
-        window.addEventListener('resize', this.onWindowResize.bind(this), false);
+        window.addEventListener('resize', this.onWindowResize.bind(this));
+        window.addEventListener('pointerdown', this.onPointerDown.bind(this));
+        
+        // Evitar el menú contextual al hacer clic derecho para rotar cámara
+        window.addEventListener('contextmenu', (e) => e.preventDefault());
 
         this.environment = new Environment(this.scene, this.loadingManager);
         this.player = new Player(this.scene, this.camera, this.gltfLoader);
         this.enemyManager = new EnemyManager(this.scene, this.player, this.gltfLoader);
+        this.missionManager = new MissionManager(this.player, this.enemyManager);
+
+        // Conectar el sistema de misiones con las muertes de enemigos
+        this.enemyManager.onEnemyKilled = (enemyType, enemyName) => {
+            this.missionManager.onEnemyKilled(enemyType, enemyName);
+        };
 
         // Targeting System
         this.raycaster = new THREE.Raycaster();
@@ -109,14 +133,47 @@ class Game {
             });
         }
 
+        // UI Modal Listeners
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            if (k === 'j') {
+                const mb = document.getElementById('mission-board-modal');
+                mb.style.display = mb.style.display === 'none' ? 'flex' : 'none';
+            }
+            if (k === 'h') {
+                const hb = document.getElementById('hangar-modal');
+                hb.style.display = hb.style.display === 'none' ? 'flex' : 'none';
+            }
+        });
+
+        document.getElementById('close-mission-board').addEventListener('click', () => {
+            document.getElementById('mission-board-modal').style.display = 'none';
+        });
+        document.getElementById('close-hangar').addEventListener('click', () => {
+            document.getElementById('hangar-modal').style.display = 'none';
+        });
+
+        // Eventos del Hangar
+        document.getElementById('btn-buy-ship-5').addEventListener('click', () => {
+            if (this.player.level >= 5) {
+                if (typeof this.player.upgradeShipToLevel5 === 'function') {
+                    this.player.upgradeShipToLevel5();
+                } else {
+                    // Fallback inline si el método no está disponible
+                    console.error('upgradeShipToLevel5 no encontrado en Player');
+                }
+                document.getElementById('hangar-modal').style.display = 'none';
+            } else {
+                const needed = 5 - this.player.level;
+                alert(`Necesitas ${needed} nivel(es) más para comprar esta nave. (Nivel actual: ${this.player.level})`);
+            }
+        });
+
         this.clock = new THREE.Clock();
         this.animate();
     }
 
     onPointerDown(event) {
-        // Evitar targeting si el usuario está usando el botón derecho para rotar la cámara
-        if (event.button === 2) return;
-
         this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -135,7 +192,10 @@ class Game {
             }
         }
         
-        this.player.setTarget(null);
+        // Si el usuario hace clic en el vacío con el botón derecho (para girar la cámara), NO deseleccionamos al bot
+        if (event.button !== 2) {
+            this.player.setTarget(null);
+        }
     }
 
     onWindowResize() {
@@ -148,11 +208,16 @@ class Game {
     animate() {
         requestAnimationFrame(this.animate.bind(this));
 
-        const delta = this.clock.getDelta();
+        let delta = this.clock.getDelta();
+
+        // Evitar el "Tab Inactive Bug": Si cambias de pestaña, el navegador pausa el juego.
+        // Al regresar, el delta puede ser altísimo (ej. 10 segundos).
+        // Limitamos el delta a 0.1s para que el juego simplemente "pause" en vez de acelerar todo de golpe.
+        if (delta > 0.1) delta = 0.1;
 
         this.player.update(delta, this.enemyManager, this.environment, this.controls);
         this.enemyManager.update(delta, this.environment);
-        this.environment.update(this.player.position); // chunk streaming + sombras
+        this.environment.update(this.player.position, this.player.velocity); // chunk streaming + sombras + estelas de agua
 
         // Actualizar Minimapa del Jugador
         const pDot = document.getElementById('minimap-player');
