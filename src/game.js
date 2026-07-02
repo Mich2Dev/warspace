@@ -4,6 +4,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { Environment } from './Environment.js';
 import { CONFIG } from '../config.js';
 import { Player } from './Player.js';
@@ -121,8 +122,15 @@ class Game {
         };
 
         // Pantalla de carga: nave, terreno, patrullas y enemigos (evita mundo vacío al entrar)
+        
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        
         this.gltfLoader = new GLTFLoader(this.loadingManager);
+        this.gltfLoader.setDRACOLoader(dracoLoader);
+        
         this.enemyGltfLoader = new GLTFLoader(this.loadingManager);
+        this.enemyGltfLoader.setDRACOLoader(dracoLoader);
 
         this.scene = new THREE.Scene();
         // Cielo azul arriba; niebla azul-gris en distancia (separación cielo/tierra)

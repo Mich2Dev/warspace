@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { fitPlayerShipModel, boostPlayerShipMaterials, PLAYER_SHIP_ROTATION_Y } from '../ships/fitPlayerShipModel.js';
 import { getPlayerShipTargetLength, getPlayerShipRotationY } from '../ships/playerShipVisuals.js';
 import { getShipById } from '../ships/playerShipCatalog.js';
@@ -9,7 +10,13 @@ import { resolveModelUrl } from '../ships/resolveModelUrl.js';
 export class HangarPreview {
     constructor(canvas) {
         this.canvas = canvas;
+        
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        
         this._loader = new GLTFLoader();
+        this._loader.setDRACOLoader(dracoLoader);
+        
         this._shipId = null;
         this._running = false;
         this._raf = 0;

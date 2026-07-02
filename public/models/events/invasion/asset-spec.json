@@ -1,0 +1,32 @@
+{
+  "line": "invasion-event-units",
+  "units": [
+    {
+      "id": "invader_alpha",
+      "type_key": "Invader_Alpha",
+      "theme": "aggressive striker",
+      "primary_color": "#ff5533",
+      "accent_color": "#ff9966"
+    },
+    {
+      "id": "invader_beta",
+      "type_key": "Invader_Beta",
+      "theme": "adaptive interceptor",
+      "primary_color": "#33aaff",
+      "accent_color": "#77ddff"
+    },
+    {
+      "id": "invader_gamma",
+      "type_key": "Invader_Gamma",
+      "theme": "heavy pulse enforcer",
+      "primary_color": "#bb44ff",
+      "accent_color": "#dd99ff"
+    }
+  ],
+  "authoring_rules": {
+    "forward_axis": "-Z",
+    "up_axis": "+Y",
+    "pivot": "center_mass",
+    "material_mode": "PBR_with_emissive"
+  }
+}
