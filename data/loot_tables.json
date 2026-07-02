@@ -1,0 +1,95 @@
+{
+  "zona1_parts": {
+    "rolls": 1,
+    "entries": [
+      { "part": "core_ionico", "weight": 35, "qty": [1, 1] },
+      { "part": "camara_disparo", "weight": 30, "qty": [1, 1] },
+      { "part": "aleacion_refuerzo", "weight": 20, "qty": [1, 2] },
+      { "part": null, "weight": 15, "qty": [0, 0] }
+    ]
+  },
+  "zona2_parts": {
+    "rolls": 1,
+    "entries": [
+      { "part": "rotor_impulsor", "weight": 30, "qty": [1, 1] },
+      { "part": "celda_propulsion", "weight": 28, "qty": [1, 1] },
+      { "part": "guia_misil", "weight": 22, "qty": [1, 1] },
+      { "part": "lente_mira", "weight": 12, "qty": [1, 1] },
+      { "part": null, "weight": 8, "qty": [0, 0] }
+    ]
+  },
+  "zona3_parts": {
+    "rolls": 1,
+    "entries": [
+      { "part": "placa_escudo", "weight": 32, "qty": [1, 1] },
+      { "part": "generador_campo", "weight": 28, "qty": [1, 1] },
+      { "part": "nanobot_kit", "weight": 18, "qty": [1, 1] },
+      { "part": "sensor_lock", "weight": 14, "qty": [1, 1] },
+      { "part": null, "weight": 8, "qty": [0, 0] }
+    ]
+  },
+  "invasion_parts": {
+    "rolls": 1,
+    "entries": [
+      { "part": "core_ionico", "weight": 15, "qty": [1, 2] },
+      { "part": "guia_misil", "weight": 15, "qty": [1, 2] },
+      { "part": "placa_escudo", "weight": 15, "qty": [1, 1] },
+      { "part": "sensor_lock", "weight": 15, "qty": [1, 1] },
+      { "part": "aleacion_refuerzo", "weight": 25, "qty": [2, 3] },
+      { "part": null, "weight": 15, "qty": [0, 0] }
+    ]
+  },
+  "patrol_bonus": {
+    "rolls": 1,
+    "entries": [
+      { "part": "aleacion_refuerzo", "weight": 40, "qty": [1, 1] },
+      { "part": "celula_reparadora", "weight": 25, "qty": [1, 1] },
+      { "part": null, "weight": 35, "qty": [0, 0] }
+    ]
+  },
+  "role_ambush": {
+    "rolls": 2,
+    "entries": [
+      { "part": "guia_misil", "weight": 35, "qty": [1, 2] },
+      { "part": "lente_mira", "weight": 30, "qty": [1, 1] },
+      { "part": "camara_disparo", "weight": 22, "qty": [1, 1] },
+      { "part": null, "weight": 13, "qty": [0, 0] }
+    ]
+  },
+  "role_border": {
+    "rolls": 1,
+    "entries": [
+      { "part": "aleacion_refuerzo", "weight": 38, "qty": [1, 2] },
+      { "part": "placa_escudo", "weight": 28, "qty": [1, 1] },
+      { "part": "core_ionico", "weight": 20, "qty": [1, 1] },
+      { "part": null, "weight": 14, "qty": [0, 0] }
+    ]
+  },
+  "role_disruptor": {
+    "rolls": 1,
+    "entries": [
+      { "part": "lente_mira", "weight": 40, "qty": [1, 1] },
+      { "part": "sensor_lock", "weight": 35, "qty": [1, 1] },
+      { "part": "guia_misil", "weight": 15, "qty": [1, 1] },
+      { "part": null, "weight": 10, "qty": [0, 0] }
+    ]
+  },
+  "role_scavenger": {
+    "rolls": 1,
+    "entries": [
+      { "part": "rotor_impulsor", "weight": 35, "qty": [1, 2] },
+      { "part": "celda_propulsion", "weight": 32, "qty": [1, 1] },
+      { "part": "nanobot_kit", "weight": 18, "qty": [1, 1] },
+      { "part": null, "weight": 15, "qty": [0, 0] }
+    ]
+  },
+  "role_heavy_escort": {
+    "rolls": 2,
+    "entries": [
+      { "part": "placa_escudo", "weight": 32, "qty": [1, 2] },
+      { "part": "generador_campo", "weight": 28, "qty": [1, 1] },
+      { "part": "aleacion_refuerzo", "weight": 25, "qty": [1, 2] },
+      { "part": null, "weight": 15, "qty": [0, 0] }
+    ]
+  }
+}

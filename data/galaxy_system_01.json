@@ -1,0 +1,64 @@
+{
+  "id": "system_aegis",
+  "name": "Sistema Aegis",
+  "starColor": "#ffe8c0",
+  "homePlanetId": "planet_01",
+  "planets": [
+    {
+      "id": "planet_01",
+      "name": "Aegis Prime",
+      "surfaceDataId": "planet_01",
+      "radius": 22000,
+      "spacePosition": { "x": 0, "y": 0, "z": 0 },
+      "universePosition": { "x": 0, "y": 0, "z": 0 },
+      "surfaceColor": "#3a7a48",
+      "atmosphereColor": "#88ccff",
+      "oceanColor": "#1a4068",
+      "hubSpawn": { "x": 0, "y": 200, "z": 4000 },
+      "description": "Tu mundo home — el mapa que ya conoces.",
+      "enabled": true,
+      "isHome": true
+    },
+    {
+      "id": "planet_02",
+      "name": "Aegis Secundus",
+      "surfaceDataId": "planet_01",
+      "radius": 22000,
+      "spacePosition": { "x": 620000, "y": 85000, "z": -480000 },
+      "universePosition": { "x": 620000, "y": 85000, "z": -480000 },
+      "surfaceColor": "#3a7a48",
+      "atmosphereColor": "#88ccff",
+      "oceanColor": "#1a4068",
+      "hubSpawn": { "x": 0, "y": 200, "z": 4000 },
+      "description": "Mundo gemelo — misma biosfera a distancia interestelar del sistema.",
+      "enabled": true,
+      "isTwin": true
+    },
+    {
+      "id": "planet_03",
+      "name": "Glacier Echo",
+      "surfaceDataId": "planet_01",
+      "radius": 9000,
+      "spacePosition": { "x": -720000, "y": 150000, "z": 680000 },
+      "universePosition": { "x": -720000, "y": 150000, "z": 680000 },
+      "surfaceColor": "#a8c8e8",
+      "atmosphereColor": "#cceeff",
+      "hubSpawn": { "x": -1500, "y": 200, "z": 5000 },
+      "description": "Placeholder — mundo helado (próximamente).",
+      "enabled": false
+    },
+    {
+      "id": "planet_04",
+      "name": "Verdant Spire",
+      "surfaceDataId": "planet_01",
+      "radius": 12500,
+      "spacePosition": { "x": 480000, "y": -120000, "z": 1100000 },
+      "universePosition": { "x": 480000, "y": -120000, "z": 1100000 },
+      "surfaceColor": "#2a6a38",
+      "atmosphereColor": "#66dd99",
+      "hubSpawn": { "x": 0, "y": 200, "z": 4500 },
+      "description": "Placeholder — selva densa (próximamente).",
+      "enabled": false
+    }
+  ]
+}

@@ -1,41 +1,58 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
+import { getItemById } from './itemCatalog.js';
+import { resolveFullMove } from './terrainRules.js';
+import { clampPointToDisc, WORLD_MAP } from './worldNav.js';
+import {
+    getStarterEquipment,
+    applyEquipmentToPlayer,
+    effectiveSpreadDeg,
+    computeMissileHitChance,
+    missileDamage,
+    homingStrength,
+    nitroSpeed,
+    PARTS,
+} from './balance.js';
+import { getRecipeById, buildEquipmentFromRecipe } from './craft.js';
+import { registerPlayerGltf } from './multiplayer/playerShipTemplate.js';
+import { scheduleWalletSave } from './profile.js';
+import { getControlState } from './controlSettings.js';
+import { buildEnemyIntel } from './enemyIntel.js';
+import { bindPlayerSystems } from './player/bindPlayerSystems.js';
+import { syncPlayerAbilityVisuals } from './player/syncPlayerAbilityVisuals.js';
+import { getHubSpawnPoint, isPlayerInHubSafeZone } from './hubSafe.js';
+import { getShipGlb, DEFAULT_SHIP_ID, getShipById, syncShipActionBar } from './ships/playerShipCatalog.js';
+import {
+    getPlayerShipTargetLength,
+    getPlayerShipShieldScale,
+    getPlayerShipRotationY,
+    getPlayerShipFallbackScale,
+} from './ships/playerShipVisuals.js';
+import { resolveModelUrl } from './ships/resolveModelUrl.js';
+import {
+    fitPlayerShipModel,
+    boostPlayerShipMaterials,
+    PLAYER_SHIP_ROTATION_Y,
+} from './ships/fitPlayerShipModel.js';
 
 export class Player {
     constructor(scene, camera, gltfLoader) {
         this.scene = scene;
         this.camera = camera;
         this.gltfLoader = gltfLoader;
-        this.position = new THREE.Vector3(0, 50, 0); // Centro del mapa
+        const hubSpawn = getHubSpawnPoint(50);
+        this.position = new THREE.Vector3(hubSpawn.x, hubSpawn.y, hubSpawn.z);
         this.velocity = new THREE.Vector3();
-        // Equipamiento e Inventario
-        this.equipment = {
-            weapon: {
-                id: 'w_01', name: 'Cañón Láser de Iones', type: 'weapon', level: 1, manufacturer: 'Industrias Terran',
-                description: 'Un arma de energía estándar y confiable usada por las fuerzas de patrulla fronteriza.',
-                stats: { damage: 5, energyCost: 5 }
-            },
-            missile: {
-                id: 'm_01', name: 'Lanzador de Ojivas Pesadas', type: 'missile', level: 1, manufacturer: 'Vulcan Corp',
-                description: 'Ojivas de detonación por proximidad diseñadas para control de masas y demolición de enjambres.',
-                stats: { areaDamageMultiplier: 30, cooldown: 2.0 }
-            },
-            engine: {
-                id: 'e_01', name: 'Propulsores Térmicos Mark I', type: 'engine', level: 1, manufacturer: 'AeroSpace Dynamics',
-                description: 'Propulsores de inyección de plasma. Robustos pero consumen mucha energía al usar el Nitro.',
-                stats: { speed: 250, nitroMultiplier: 2.5 }
-            },
-            hull: {
-                id: 'h_01', name: 'Blindaje de Titanio', type: 'hull', level: 1, manufacturer: 'Industrias Terran',
-                description: 'Aleación estándar que ofrece protección moderada contra impactos balísticos y láseres de baja intensidad.',
-                stats: { maxHp: 100, maxEnergy: 100 }
-            },
-            shield: {
-                id: 's_01', name: 'Generador de Escudo de Iones', type: 'shield', level: 1, manufacturer: 'Aegis Dynamics',
-                description: 'Proyecta una burbuja de energía de alta densidad alrededor de la nave capaz de absorber daño temporalmente.',
-                stats: { shieldHp: 300, duration: 15.0, cooldown: 30.0 }
-            }
-        };
+        this._terrainHintCooldown = 0;
+        // Equipamiento e Inventario (7 slots — balance estándar Lvl1)
+        this.equipment = getStarterEquipment();
+        this.parts = {};
+        this.planetId = 'planet_01';
+        this.activeShipId = DEFAULT_SHIP_ID;
+        this._loadedShipId = null;
+        this._shipLoadGen = 0;
+        this._usingFallbackHull = false;
+        this.shipLevel = 1;
 
         // RPG Stats derivados del equipamiento
         this.level = 1;
@@ -46,10 +63,42 @@ export class Player {
         this.hp = this.maxHp;
         this.maxEnergy = this.equipment.hull.stats.maxEnergy;
         this.energy = this.maxEnergy;
-        
-        this.baseDamage = this.equipment.weapon.stats.damage;
-        this.speed = this.equipment.engine.stats.speed;
-        this.missileCooldown = this.equipment.missile.stats.cooldown;
+
+        applyEquipmentToPlayer(this);
+        this._slowMult = 1;
+        this._slowUntil = 0;
+
+        // ── Economy & Progression ──
+        this.credits = 0;
+        this.missileJamPenalty = 0;
+        this.inventory = [];
+        this.killStreak = 0;
+        this.lastKillTime = -999;
+        this.streakMultiplier = 1;
+        this.creditMultiplierBonus = 0;
+        this.energyRegenRate = 8; // base per second
+
+        // Upgrade tiers (0 = not bought, max defined per upgrade)
+        this.upgrades = {
+            damage:      0,   // max 3 — +30% per tier
+            fireRate:    0,   // max 3 — -20% cooldown per tier
+            speed:       0,   // max 3 — +20% per tier
+            maxHp:       0,   // max 3 — +75 HP per tier
+            energyRegen: 0,   // max 3 — +30% regen per tier
+            missiles:    0,   // max 2 — -25% cooldown per tier
+            earnings:    0,   // max 2 — +20% credit drops per tier
+        };
+
+        // Upgrade costs per tier [tier0cost, tier1cost, tier2cost]
+        this.UPGRADE_COSTS = {
+            damage:      [300, 550, 900],
+            fireRate:    [250, 450, 750],
+            speed:       [200, 400, 650],
+            maxHp:       [200, 350, 600],
+            energyRegen: [150, 300, 500],
+            missiles:    [350, 650],
+            earnings:    [500, 950],
+        };
         
         // Shield state
         this.shieldActive = false;
@@ -58,8 +107,24 @@ export class Player {
         this.lastShieldTime = 0;
         
         this.keys = {
-            w: false, a: false, s: false, d: false, " ": false, tab: false, '1': false, '2': false, '3': false, i: false, rightClick: false
+            w: false, a: false, s: false, d: false, " ": false, tab: false,
+            '1': false, '2': false, '3': false, '4': false, e: false, shift: false,
+            i: false, k: false, f: false, arrowup: false, arrowdown: false,
+            rightClick: false,
         };
+        this._repairKeyPulse = 0;
+        this._shieldKeyPulse = 0;
+        this._repairChannelUntil = 0;
+        this._repairChannelRate = 0;
+        this._repairChannelAccum = 0;
+        this.mobileInput = { x: 0, z: 0 };
+        this._mobileFire = false;
+        this._mobileCameraDrag = false;
+        this._cameraManualIdle = 0;
+        this._cameraRecenterT = 1;
+        this._cameraRecenterDuration = 0.55;
+        this._cameraRecenterFrom = null;
+        this._cameraRecenterGoal = null;
 
         this.autoPilot = false;
         this.autoPilotTarget = null;
@@ -83,16 +148,12 @@ export class Player {
             blending: THREE.AdditiveBlending 
         });
 
-        // Misil (Torpedo de Plasma)
-        this.missileGeo = new THREE.CylinderGeometry(2, 2, 40, 8); // Más estilizado
+        // Misil — geometría compartida, material básico (sin bloom pesado)
+        this.missileGeo = new THREE.CylinderGeometry(1.2, 1.6, 9, 4);
         this.missileGeo.rotateX(Math.PI / 2);
-        this.missileMat = new THREE.MeshStandardMaterial({ 
-            color: 0xff3300, 
-            emissive: 0xff3300,
-            emissiveIntensity: 4.0,
-            transparent: true,
-            blending: THREE.AdditiveBlending
-        });
+        this.missileMat = new THREE.MeshBasicMaterial({ color: 0xffaa44 });
+        this._msToTarget = new THREE.Vector3();
+        this._msLook = new THREE.Vector3();
 
         // Caché de luces de explosión (Añadir/quitar luces fuerza recompilación de shaders)
         this.explosionLights = [];
@@ -121,6 +182,10 @@ export class Player {
         this.lastMissileTime = 0;
         this.lastShotTime = 0;
         this.lastDamageTime = 0; // Para el auto-reparador
+
+        bindPlayerSystems(this);
+
+        this.bootstrapInventory();
 
         this.initModel();
         this.initControls();
@@ -167,98 +232,155 @@ export class Player {
         this.scene.add(this.mesh);
         this.mesh.position.copy(this.position);
 
-        // Visuals
         this.visualGroup = new THREE.Group();
         this.mesh.add(this.visualGroup);
 
-        // Cargamos el modelo del jugador desde la carpeta public/models/player
-        this.gltfLoader.load(
-            '/models/player/shock_lvl1.glb',
-            (gltf) => {
-                const model = gltf.scene;
-                
-                // Usamos la escala configurada en config.js
-                model.scale.set(CONFIG.VISUALS.PLAYER_SCALE, CONFIG.VISUALS.PLAYER_SCALE, CONFIG.VISUALS.PLAYER_SCALE);
-                
-                model.traverse((child) => {
-                    if (child.isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                        // MAGIA GLB: Potenciar luces nativas del jugador también
-                        if (child.material && child.material.emissive && (child.material.emissive.r > 0 || child.material.emissive.g > 0 || child.material.emissive.b > 0)) {
-                            child.material = Array.isArray(child.material) ? child.material.map(m => m.clone()) : child.material.clone();
-                            child.material.emissiveIntensity = 8.0;
-                        }
-                    }
-                });
+        this._buildShieldBubble();
+        this._buildRepairGlow();
+    }
 
-                // Forzamos la rotación usando un grupo intermedio inmutable
-                const rotationGroup = new THREE.Group();
-                rotationGroup.rotation.y = 0; // Si Pi es atrás, 0 es el frente exacto
-                rotationGroup.add(model);
-
-                // FORZAR ACTUALIZACIÓN DE MATRIZ
-                // Esto es CRÍTICO: Si no se actualiza, el Bounding Box se calcula con la escala 1x
-                // en lugar de la escala masiva PLAYER_SCALE, dejando todas las luces metidas en el centro.
-                model.updateMatrixWorld(true);
-
-                // Calcular el Bounding Box absoluto para ignorar el pivote (origen) del artista 3D
-                // LOGICA ROBUSTA DE GEOMETRÍA:
-                const box = new THREE.Box3().setFromObject(model);
-                const size = new THREE.Vector3();
-                const center = new THREE.Vector3();
-                box.getSize(size);
-                box.getCenter(center);
-                
-                // Asumiendo que la nave vuela hacia -Z, la cola siempre será el máximo absoluto en Z (box.max.z)
-                const tailZ = box.max.z;
-
-                // AJUSTE FINO (Fine-tuning): 
-                // En lugar de guardar Vectores crudos, creamos "Anclajes" (Dummies 3D) invisibles
-                // y los atamos al rotationGroup. Así heredan TODAS las rotaciones (Roll, Pitch, Yaw)
-                // y las estelas nunca se salen de lado cuando la nave gira.
-                const offsetData = [
-                    // Medios Superiores (Ligeramente separados y un tilín más abajo)
-                    new THREE.Vector3(center.x - (size.x * 0.04), center.y + (size.y * 0.03), tailZ - (size.z * 0.12)),
-                    new THREE.Vector3(center.x + (size.x * 0.04), center.y + (size.y * 0.03), tailZ - (size.z * 0.12)),
-                    // Medio Inferior
-                    new THREE.Vector3(center.x, center.y - (size.y * 0.06), tailZ - (size.z * 0.12)), 
-                    // Alas 
-                    new THREE.Vector3(center.x - (size.x * 0.18), center.y - (size.y * 0.13), tailZ - (size.z * 0.15)),
-                    new THREE.Vector3(center.x + (size.x * 0.18), center.y - (size.y * 0.13), tailZ - (size.z * 0.15))
-                ];
-
-                this.engineAnchors = [];
-                offsetData.forEach(pos => {
-                    const dummy = new THREE.Object3D();
-                    dummy.position.copy(pos);
-                    rotationGroup.add(dummy); // Anclado físicamente a la rotación de la malla
-                    this.engineAnchors.push(dummy);
-                });
-
-                // Ya NO creamos Sprites artificiales (Flares)
-                this.flares = [];
-
-                this.visualGroup.add(rotationGroup);
-                console.log("Shock Lvl1 Model Loaded Successfully! Anchors:", this.engineAnchors.length);
-            }, undefined, (error) => {
-                console.warn('Could not load shock_lvl1.glb. Falling back to code model.');
-                this.buildFallbackModel();
-            });
-
-        // Shield Bubble Visual (Radio 30 para cubrir toda la nave)
-        const shieldGeo = new THREE.SphereGeometry(30, 32, 32);
-        const shieldMat = new THREE.MeshBasicMaterial({
-            color: 0x00ffff,
+    _buildRepairGlow() {
+        const baseR = 40;
+        this._repairGlowBaseRadius = baseR;
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0x33cc66,
             transparent: true,
-            opacity: 0.3,
+            opacity: 0.24,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
-            side: THREE.DoubleSide
+            side: THREE.BackSide,
         });
-        this.shieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
-        this.shieldMesh.visible = false;
-        this.mesh.add(this.shieldMesh);
+        this.repairGlow = new THREE.Mesh(new THREE.SphereGeometry(baseR, 12, 8), mat);
+        this.repairGlow.visible = false;
+        this.repairGlow.frustumCulled = false;
+        this.repairGlow.renderOrder = 1;
+        this.visualGroup.add(this.repairGlow);
+    }
+
+    /** Cambia el casco visual (GLB) y aplica perfil de la nave. */
+    equipShipHull(shipId, opts = {}) {
+        const ship = getShipById(shipId);
+        if (!ship || !this.gltfLoader) return;
+
+        if (!opts.force && this._loadedShipId === shipId && !this._usingFallbackHull) return;
+
+        this._shipLoadGen += 1;
+        const gen = this._shipLoadGen;
+        const url = resolveModelUrl(ship.glb);
+
+        this.activeShipId = shipId;
+        applyEquipmentToPlayer(this);
+        if (typeof ship.applyStats === 'function') ship.applyStats(this);
+        
+        this.updateAbilityUI(ship);
+
+        this.gltfLoader.load(
+            url,
+            (gltf) => {
+                if (gen !== this._shipLoadGen || this.activeShipId !== shipId) return;
+                this._mountShipScene(gltf, ship);
+                this._loadedShipId = shipId;
+                this._usingFallbackHull = false;
+                registerPlayerGltf(gltf);
+                console.log('[Player] Nave GLB cargada:', url);
+                if (!opts.silent) {
+                    const log = document.getElementById('log-text');
+                    if (log) log.textContent = `Nave equipada: ${ship.name}`;
+                }
+            },
+            undefined,
+            (error) => {
+                if (gen !== this._shipLoadGen || this.activeShipId !== shipId) return;
+                console.warn('[Player] Error cargando nave', url, error);
+                if (opts.retry !== false) {
+                    setTimeout(() => {
+                        if (gen === this._shipLoadGen) {
+                            this.equipShipHull(shipId, { ...opts, retry: false, force: true, silent: true });
+                        }
+                    }, 400);
+                    return;
+                }
+                this.buildFallbackModel();
+                this._usingFallbackHull = true;
+            },
+        );
+    }
+
+    _mountShipScene(gltf, shipDef = null) {
+        const ship = shipDef || getShipById(this.activeShipId);
+        const toRemove = [];
+        this.visualGroup.children.forEach((c) => {
+            if (c !== this.shieldGroup) toRemove.push(c);
+        });
+        toRemove.forEach((c) => this.visualGroup.remove(c));
+
+        const model = gltf.scene;
+        boostPlayerShipMaterials(model);
+        const targetLength = getPlayerShipTargetLength(ship);
+        const { box } = fitPlayerShipModel(model, targetLength);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+
+        const rotationGroup = new THREE.Group();
+        rotationGroup.rotation.y = getPlayerShipRotationY(ship);
+        rotationGroup.add(model);
+
+        const tailZ = box.max.z;
+        const offsetData = [
+            new THREE.Vector3(center.x - (size.x * 0.04), center.y + (size.y * 0.03), tailZ - (size.z * 0.12)),
+            new THREE.Vector3(center.x + (size.x * 0.04), center.y + (size.y * 0.03), tailZ - (size.z * 0.12)),
+            new THREE.Vector3(center.x, center.y - (size.y * 0.06), tailZ - (size.z * 0.12)),
+            new THREE.Vector3(center.x - (size.x * 0.18), center.y - (size.y * 0.13), tailZ - (size.z * 0.15)),
+            new THREE.Vector3(center.x + (size.x * 0.18), center.y - (size.y * 0.13), tailZ - (size.z * 0.15)),
+        ];
+
+        this.engineAnchors = [];
+        offsetData.forEach((pos) => {
+            const dummy = new THREE.Object3D();
+            dummy.position.copy(pos);
+            rotationGroup.add(dummy);
+            this.engineAnchors.push(dummy);
+        });
+
+        this.flares = [];
+        this.visualGroup.add(rotationGroup);
+        this._fitShieldScale?.();
+    }
+
+    _buildShieldBubble() {
+        const baseR = 45;
+        this._shieldBaseRadius = baseR;
+        this._shieldTargetScale = getPlayerShipShieldScale(getShipById(this.activeShipId));
+
+        const group = new THREE.Group();
+        group.visible = false;
+        group.frustumCulled = false;
+
+        const shellMat = new THREE.MeshBasicMaterial({
+            color: 0x44ddff,
+            transparent: true,
+            opacity: 0.38,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            wireframe: true,
+        });
+        this.shieldShell = new THREE.Mesh(new THREE.IcosahedronGeometry(baseR, 1), shellMat);
+        this.shieldCore = null;
+        this.shieldRing = null;
+
+        group.add(this.shieldShell);
+        this.shieldGroup = group;
+        this.shieldMesh = group;
+        this.visualGroup.add(group);
+    }
+
+    _fitShieldScale() {
+        if (!this.shieldMesh) return;
+        const ship = getShipById(this.activeShipId);
+        const targetScale = getPlayerShipShieldScale(ship);
+        this.shieldMesh.scale.set(targetScale, targetScale, targetScale);
     }
 
     upgradeShipToLevel5() {
@@ -270,6 +392,8 @@ export class Player {
         this.hp = 400;
         this.baseDamage = 15;
         this.speed = 200;
+        this._slowMult = 1;
+        this._slowUntil = 0;
         this.equipment.hull.stats.maxHp = 400;
         this.equipment.weapon.stats.damage = 15;
         this.equipment.engine.stats.speed = 200;
@@ -345,23 +469,31 @@ export class Player {
 
             this.visualGroup.add(rotationGroup);
             
-            // Move shield if exists
-            if (this.shieldMesh) {
-                this.mesh.add(this.shieldMesh);
+            // Escudo sigue al visualGroup (mismo espacio que el modelo)
+            if (this.shieldGroup && !this.visualGroup.children.includes(this.shieldGroup)) {
+                this.visualGroup.add(this.shieldGroup);
             }
+            this._fitShieldScale();
         });
         
         this.updateUI();
     }
 
     buildFallbackModel() {
+        const toRemove = [];
+        this.visualGroup.children.forEach((c) => {
+            if (c !== this.shieldGroup) toRemove.push(c);
+        });
+        toRemove.forEach((c) => this.visualGroup.remove(c));
+
+        const hull = new THREE.Group();
         // Fuselaje principal (Largo y aerodinámico)
         const fuselageGeo = new THREE.CylinderGeometry(0.5, 1.5, 12, 16);
         fuselageGeo.rotateX(Math.PI / 2);
         const fuselageMat = new THREE.MeshStandardMaterial({ color: 0x555566, metalness: 0.8, roughness: 0.2 });
         const fuselage = new THREE.Mesh(fuselageGeo, fuselageMat);
         fuselage.castShadow = true;
-        this.mesh.add(fuselage);
+        hull.add(fuselage);
 
         // Morro/Nariz (Puntiaguda)
         const noseGeo = new THREE.ConeGeometry(0.5, 4, 16);
@@ -369,7 +501,7 @@ export class Player {
         const nose = new THREE.Mesh(noseGeo, fuselageMat);
         nose.position.set(0, 0, -8);
         nose.castShadow = true;
-        this.mesh.add(nose);
+        hull.add(nose);
 
         // Cabina (Cristal Oscuro Tintado)
         const cockpitGeo = new THREE.CapsuleGeometry(0.6, 2, 8, 16);
@@ -378,7 +510,7 @@ export class Player {
         const cockpit = new THREE.Mesh(cockpitGeo, glassMat);
         cockpit.position.set(0, 0.8, -3);
         cockpit.rotation.x = -0.1;
-        this.mesh.add(cockpit);
+        hull.add(cockpit);
 
         // Alas principales (En flecha)
         const wingGeo = new THREE.BoxGeometry(10, 0.2, 5);
@@ -387,20 +519,20 @@ export class Player {
         wing.position.set(0, 0, 1);
         wing.rotation.x = -0.05;
         wing.castShadow = true;
-        this.mesh.add(wing);
+        hull.add(wing);
 
         // Aleta de cola vertical
         const tailGeo = new THREE.BoxGeometry(0.2, 2.5, 3);
         const tail = new THREE.Mesh(tailGeo, wingMat);
         tail.position.set(0, 1.5, 4.5);
         tail.rotation.x = -0.2;
-        this.mesh.add(tail);
+        hull.add(tail);
 
         // Estabilizadores traseros horizontales
         const stabGeo = new THREE.BoxGeometry(4, 0.2, 2);
         const stab = new THREE.Mesh(stabGeo, fuselageMat);
         stab.position.set(0, 0.2, 5);
-        this.mesh.add(stab);
+        hull.add(stab);
 
         // Misiles bajo las alas
         const missileGeo = new THREE.CylinderGeometry(0.2, 0.2, 3, 8);
@@ -409,18 +541,22 @@ export class Player {
         
         const m1 = new THREE.Mesh(missileGeo, missileMat);
         m1.position.set(-3.5, -0.3, 1);
-        this.mesh.add(m1);
+        hull.add(m1);
         
         const m2 = new THREE.Mesh(missileGeo, missileMat);
         m2.position.set(3.5, -0.3, 1);
-        this.mesh.add(m2);
+        hull.add(m2);
 
         // Motor central brillante
         const engineMat = new THREE.MeshBasicMaterial({ color: 0xff00ff }); // Púrpura/Rosa
         const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.0, 0.5, 16), engineMat);
         engine.rotateX(Math.PI / 2);
         engine.position.set(0, 0, 6.2);
-        this.mesh.add(engine);
+        hull.add(engine);
+
+        hull.scale.setScalar(getPlayerShipFallbackScale());
+        this.visualGroup.add(hull);
+        this._fitShieldScale?.();
     }
 
     initControls() {
@@ -435,27 +571,58 @@ export class Player {
                 this.keys.shift = true;
                 return;
             }
+            if (e.code === 'Numpad8') {
+                if (!e.repeat) {
+                    window.__game?.galaxy?.onAscendKey?.(window.__game?._pointerLock);
+                }
+                e.preventDefault();
+                return;
+            }
+            if (e.code === 'ArrowUp') {
+                this.keys.arrowup = true;
+                e.preventDefault();
+                return;
+            }
+            if (e.code === 'Numpad5' && !e.repeat) {
+                window.__game?.galaxy?.onDescendKey?.(window.__game?._pointerLock);
+                e.preventDefault();
+                return;
+            }
+            if (e.code === 'ArrowDown' || e.code === 'Numpad2') {
+                this.keys.arrowdown = true;
+                e.preventDefault();
+                return;
+            }
             if(this.keys.hasOwnProperty(k)) this.keys[k] = true;
             if(e.key === ' ') this.keys[' '] = true;
             if(k === 'e') this.keys['e'] = true;
             if(k === '1') this.keys['1'] = true;
             if(k === '2') this.keys['2'] = true;
-            if(k === '3') this.keys['3'] = true;
-            if(k === 'i') {
-                this.toggleInventory();
-                return;
+            if (k === '3') {
+                this.keys['3'] = true;
+                this._repairKeyPulse = 0.2;
+                this.activateRepairBurst();
             }
-            
+            if (k === '4') {
+                this.keys['4'] = true;
+                this._shieldKeyPulse = 0.2;
+                this.activateShield();
+            }
+            if (k === 'c') this.requestCameraRecenter();
+            if (k === 'escape') {
+                if (this.target) this.setTarget(null);
+                else this.clearNavDestination();
+            }
             // --- TELEPORT CHEATS PARA TESTEO ---
             if(k === '7') {
                 this.position.set(CONFIG.ZONES.ZONA1.x, 200, CONFIG.ZONES.ZONA1.z);
                 this.velocity.set(0,0,0);
             }
-            if(k === '8') {
+            if (k === '8' && !e.code.startsWith('Numpad')) {
                 this.position.set(CONFIG.ZONES.ZONA2.x, 200, CONFIG.ZONES.ZONA2.z);
                 this.velocity.set(0,0,0);
             }
-            if(k === '9') {
+            if (k === '9' && !e.code.startsWith('Numpad')) {
                 this.position.set(CONFIG.ZONES.ZONA3.x, 200, CONFIG.ZONES.ZONA3.z);
                 this.velocity.set(0,0,0);
             }
@@ -466,7 +633,8 @@ export class Player {
             // -----------------------------------
             
             if (['w', 'a', 's', 'd'].includes(k)) {
-                this.autoPilot = false; // Cancel autopilot on manual move
+                this.autoPilot = false;
+                this.clearNavDestination();
             }
         });
         document.addEventListener('keyup', (e) => {
@@ -475,81 +643,66 @@ export class Player {
                 this.keys.shift = false;
                 return;
             }
+            if (e.code === 'ArrowUp') {
+                this.keys.arrowup = false;
+                return;
+            }
+            if (e.code === 'Numpad8') {
+                return;
+            }
+            if (e.code === 'ArrowDown' || e.code === 'Numpad2') {
+                this.keys.arrowdown = false;
+                return;
+            }
             if(this.keys.hasOwnProperty(k)) this.keys[k] = false;
             if(e.key === ' ') this.keys[' '] = false;
             if(k === 'e') this.keys['e'] = false;
             if(k === '1') this.keys['1'] = false;
             if(k === '2') this.keys['2'] = false;
             if(k === '3') this.keys['3'] = false;
+            if(k === '4') this.keys['4'] = false;
         });
 
         window.addEventListener('mousedown', (e) => {
             if (e.button === 2) this.keys['rightClick'] = true;
+            if (e.button === 1) {
+                e.preventDefault();
+                this.requestCameraRecenter();
+            }
         });
         window.addEventListener('mouseup', (e) => {
             if (e.button === 2) this.keys['rightClick'] = false;
         });
+
+        this._wireActionBarClicks();
     }
 
-    activateAutoPilot(targetOrManager) {
-        if (targetOrManager instanceof THREE.Vector3) {
-            // Autopilot a coordenada (del minimapa)
-            this.navTarget = targetOrManager;
-            this.setTarget(null);
-            this.autoPilot = true;
-            this.autoAttack = false;
-            return;
-        }
-
-        // Buscar al enemigo más cercano si pulsamos TAB
-        const enemyManager = targetOrManager;
-        if (!enemyManager || enemyManager.enemies.length === 0) return;
-
-        let closest = null;
-        let minDist = Infinity;
-        for (let enemy of enemyManager.enemies) {
-            const dist = this.position.distanceTo(enemy.position);
-            if (dist < minDist) {
-                minDist = dist;
-                closest = enemy;
-            }
-        }
-        if (closest) {
-            this.setTarget(closest);
-            this.navTarget = null;
-            this.autoPilot = true;
-        }
+    _wireActionBarClicks() {
+        const bind = (id, fn) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('click', (e) => {
+                e.preventDefault();
+                fn();
+            });
+        };
+        bind('slot-cannon', () => this.shoot());
+        bind('slot-missile', () => this.shootMissile());
+        bind('slot-repair', () => this.activateRepairBurst());
+        bind('slot-shield', () => this.activateShield());
     }
 
-    setTarget(enemy) {
-        if(this.target === enemy) return;
-        if(this.target && this.target.userData.selectionRing) this.target.userData.selectionRing.visible = false;
-        
-        this.target = enemy;
-        const targetStatus = document.getElementById('target-status');
-        if (this.target) {
-            if (this.target.userData.selectionRing) this.target.userData.selectionRing.visible = true;
-            targetStatus.style.display = 'block';
-            
-            const nameEl = document.getElementById('target-name');
-            const targetType = this.target.userData.type ? this.target.userData.type.toUpperCase() : 'UNKNOWN';
-            const targetLevel = CONFIG.COMBAT[`${targetType}_LEVEL`] || 1;
-            
-            nameEl.innerText = this.target.userData.name || 'Enemy Vessel';
-            document.getElementById('target-level').innerText = `[Lvl ${targetLevel}]`;
-            
-            if(this.target.userData.type === 'Boss') {
-                nameEl.style.color = '#ffaa00';
-                nameEl.style.fontSize = '18px';
-            } else {
-                nameEl.style.color = '#00ffff';
-                nameEl.style.fontSize = '16px';
-            }
-            
-            this.updateTargetUI();
-        } else {
-            targetStatus.style.display = 'none';
-        }
+    /** ¿El jugador está moviendo con WASD o joystick (no solo autopilot)? */
+
+    /** Dirección horizontal de la proa (velocidad o mesh). */
+
+    /** Anima la cámara detrás de la nave (como al iniciar). */
+
+
+    /** Pausa el seguimiento automático tras rotar la cámara a mano. */
+
+    updateAbilityUI(ship) {
+        syncShipActionBar(ship);
     }
 
     updateUI() {
@@ -574,12 +727,13 @@ export class Player {
         const shieldText = document.getElementById('shield-text');
         
         if (shieldBarContainer && shieldBar && shieldText) {
-            if (this.shieldActive) {
+            if (this._isShieldUp()) {
                 shieldBarContainer.style.display = 'block';
-                const maxShieldHp = this.equipment.shield.stats.shieldHp;
-                const shieldPercent = (this.shieldHp / maxShieldHp) * 100;
+                const maxShieldHp = this.shieldMax || this._getShieldStats().shieldHp;
+                const shieldPercent = Math.max(0, Math.min(100, (this.shieldHp / maxShieldHp) * 100));
                 shieldBar.style.width = `${shieldPercent}%`;
-                shieldText.innerText = `${Math.ceil(this.shieldHp)} / ${maxShieldHp} SHIELD`;
+                const secs = Math.ceil(this.shieldTimer ?? 0);
+                shieldText.innerText = `${Math.ceil(this.shieldHp)} / ${maxShieldHp} ESCUDO · ${secs}s`;
             } else {
                 shieldBarContainer.style.display = 'none';
             }
@@ -587,622 +741,82 @@ export class Player {
 
         if (xpBar) xpBar.style.width = `${(this.xp / this.xpToNextLevel) * 100}%`;
         if (xpText) xpText.innerText = `${Math.floor(this.xp)} / ${this.xpToNextLevel} XP`;
-        if (levelText) levelText.innerText = `(Lvl ${this.level})`;
+        if (levelText) levelText.innerText = `NV ${this.level}`;
+        const xpLabel = document.getElementById('xp-strip-label');
+        if (xpLabel) xpLabel.textContent = `NV ${this.level}`;
     }
 
-    gainXP(amount) {
-        this.xp += amount;
-        this.accumulatedXpToLog = (this.accumulatedXpToLog || 0) + amount;
-        let leveledUp = false;
-        
-        while (this.xp >= this.xpToNextLevel) {
-            this.level++;
-            this.xp -= this.xpToNextLevel;
-            this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5);
-            
-            this.maxHp += 100;
-            this.hp = this.maxHp;
-            this.energy = this.maxEnergy;
-            
-            leveledUp = true;
-        }
-        
-        if (leveledUp) {
-            this.triggerLevelUpEffect();
-        }
+    // ══════════════════════════════════════════════
+    //  CREDIT & KILL STREAK SYSTEM
+    // ══════════════════════════════════════════════
 
-        this.updateUI();
+    /** Punto en la cúpula del escudo hacia el origen del disparo. */
 
-        if (this.xpLogTimeout) clearTimeout(this.xpLogTimeout);
-        this.xpLogTimeout = setTimeout(() => {
-            const log = document.getElementById('combat-log');
-            if (log) {
-                if (leveledUp) {
-                    log.innerHTML = `<span style="color:#aa00ff; font-weight:bold;">LEVEL UP! Reached Level ${this.level}! HP Restored.</span>`;
-                } else {
-                    log.innerText = `Gained ${this.accumulatedXpToLog} XP.`;
-                }
-            }
-            this.accumulatedXpToLog = 0;
-        }, 50);
-    }
+    /** VFX + HUD coherente — escudo cyan vs casco rojo. */
 
-    triggerLevelUpEffect() {
-        // Efecto mágico de "Ascenso" (Dorado y complejo - Pre-cacheado)
-        const ringMat = this.lvlRingMat.clone();
-        ringMat.opacity = 1.0;
-        
-        const ring1 = new THREE.Mesh(this.lvlRingGeo1, ringMat);
-        ring1.rotation.x = Math.PI / 2;
-        ring1.position.copy(this.mesh.position);
-        this.scene.add(ring1);
-
-        const ringMat2 = ringMat.clone();
-        const ring2 = new THREE.Mesh(this.lvlRingGeo2, ringMat2);
-        ring2.rotation.x = Math.PI / 2;
-        ring2.position.copy(this.mesh.position);
-        this.scene.add(ring2);
-
-        // Luz divina dorada (Reutilizada de caché)
-        const light = this.levelUpLight;
-        light.position.copy(this.mesh.position);
-        light.position.y += 10;
-        light.intensity = 15;
-
-        // Partículas flotantes doradas (chispas mágicas)
-        const particleCount = 40;
-        const pGeo = new THREE.BufferGeometry();
-        const pPos = new Float32Array(particleCount * 3);
-        const pVel = [];
-        for(let i=0; i<particleCount; i++) {
-            pPos[i*3] = this.mesh.position.x + (Math.random()-0.5)*40;
-            pPos[i*3+1] = this.mesh.position.y + Math.random()*10;
-            pPos[i*3+2] = this.mesh.position.z + (Math.random()-0.5)*40;
-            pVel.push(new THREE.Vector3(0, Math.random()*2 + 1, 0));
-        }
-        pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-        const pMat = this.lvlPMat.clone();
-        pMat.opacity = 1.0;
-        const particles = new THREE.Points(pGeo, pMat);
-        this.scene.add(particles);
-
-        // Texto flotante 3D del Nivel (Canvas reutilizado)
-        this.lvlCtx.clearRect(0, 0, 512, 256);
-        this.lvlCtx.font = 'bold 80px "Arial Black", Arial';
-        this.lvlCtx.textAlign = 'center';
-        this.lvlCtx.textBaseline = 'middle';
-        this.lvlCtx.fillStyle = '#ffffff'; 
-        this.lvlCtx.shadowColor = '#ffaa00'; 
-        this.lvlCtx.shadowBlur = 25;
-        this.lvlCtx.fillText('LVL ' + this.level, 256, 128);
-        this.lvlCtx.fillText('LVL ' + this.level, 256, 128);
-        this.lvlCtx.fillText('LVL ' + this.level, 256, 128);
-        this.lvlTex.needsUpdate = true;
-        
-        const spriteMat = this.lvlSpriteMat.clone();
-        spriteMat.opacity = 1.0;
-        const levelText = new THREE.Sprite(spriteMat);
-        levelText.scale.set(60, 30, 1); 
-        levelText.position.copy(this.mesh.position);
-        levelText.position.y += 20; 
-        this.scene.add(levelText);
-
-        let progress = 0;
-        const animateLevelUp = () => {
-            progress += 1;
-            
-            // Los anillos suben, rotan y se expanden (Mucho más lento)
-            ring1.position.y += 0.5;
-            ring2.position.y += 0.3;
-            ring1.rotation.z += 0.03;
-            ring2.rotation.z -= 0.03;
-            
-            const scale1 = 1 + (progress * 0.015);
-            ring1.scale.set(scale1, scale1, 1);
-            ring2.scale.set(scale1*0.8, scale1*0.8, 1);
-            
-            ringMat.opacity = Math.max(0, ringMat.opacity - 0.005);
-            ringMat2.opacity = Math.max(0, ringMat2.opacity - 0.005);
-            pMat.opacity = Math.max(0, pMat.opacity - 0.005);
-            spriteMat.opacity = Math.max(0, spriteMat.opacity - 0.003);
-            light.intensity = Math.max(0, light.intensity - 0.05);
-
-            // Mover el texto hacia arriba (Más suave)
-            levelText.position.y += 0.15;
-
-            // Mover partículas (Más lento)
-            const positions = particles.geometry.attributes.position.array;
-            for(let i=0; i<particleCount; i++) {
-                positions[i*3+1] += pVel[i].y * 0.3;
-            }
-            particles.geometry.attributes.position.needsUpdate = true;
-
-            if (ringMat.opacity > 0 || light.intensity > 0) {
-                requestAnimationFrame(animateLevelUp);
-            } else {
-                this.scene.remove(ring1);
-                this.scene.remove(ring2);
-                this.scene.remove(particles);
-                this.scene.remove(levelText);
-                ringMat.dispose();
-                ringMat2.dispose();
-                pGeo.dispose();
-                pMat.dispose();
-                spriteMat.dispose();
-            }
-        };
-        animateLevelUp();
-    }
+    // ══════════════════════════════════════════════
+    //  UPGRADE SYSTEM
+    // ══════════════════════════════════════════════
 
     // (Duplicate takeDamage removed)
-    updateTargetUI() {
-        if(this.target) {
-            const hpBar = document.getElementById('target-hp-bar');
-            const hpText = document.getElementById('target-hp-text');
-            if (hpBar) hpBar.style.width = Math.max(0, (this.target.userData.hp / this.target.userData.maxHp) * 100) + '%';
-            if (hpText) hpText.innerText = `${Math.max(0, Math.floor(this.target.userData.hp))} / ${this.target.userData.maxHp} HP`;
-        }
-    }
 
-    shoot() {
-        if (!this.target || this.energy < 5) return;
-        const now = Date.now();
-        if (now - this.lastShotTime < 200) return; 
-        
-        this.lastShotTime = now;
-        this.energy -= 5;
-        this.updateUI();
+    /** Pulso paralizador del comandante de patrulla — relentiza la nave unos segundos. */
 
-        const spawnLaser = (offsetX) => {
-            const laser = new THREE.Group();
-            
-            const outerLaser = new THREE.Mesh(this.laserGeo, this.laserMat);
-            const innerGeo = new THREE.CylinderGeometry(0.3, 0.3, 130, 8);
-            innerGeo.rotateX(Math.PI / 2);
-            const innerMat = new THREE.MeshStandardMaterial({ 
-                color: 0xffffff, 
-                emissive: 0xffffff, 
-                emissiveIntensity: 10.0 
-            });
-            const innerLaser = new THREE.Mesh(innerGeo, innerMat);
-            
-            laser.add(outerLaser);
-            laser.add(innerLaser);
-            
-            // Calcular offset lateral usando el cuaternión de la nave
-            const offset = new THREE.Vector3(offsetX, 0, 0);
-            offset.applyQuaternion(this.mesh.quaternion);
-            
-            laser.position.copy(this.mesh.position).add(offset);
-            laser.position.y += 2; 
-            
-            // Variación muy leve para realismo, pero apuntando al objetivo
-            const targetPos = this.target.position.clone();
-            targetPos.x += (Math.random()-0.5)*2;
-            targetPos.y += (Math.random()-0.5)*2;
-            laser.lookAt(targetPos);
-            
-            this.scene.add(laser);
-            this.lasers.push({ mesh: laser, target: this.target, speed: 3000 });
-        };
-        
-        // Spawnear doble láser (cañones laterales)
-        spawnLaser(12);
-        spawnLaser(-12);
-    }
-
-    shootMissile() {
-        if (!this.target || this.target.userData.hp <= 0) return;
-        const now = this.time || 0;
-        if (now - this.lastMissileTime < this.missileCooldown) return;
-        this.lastMissileTime = now;
-
-        const missile = new THREE.Mesh(this.missileGeo, this.missileMat);
-        
-        missile.position.copy(this.mesh.position);
-        missile.position.y += 2; 
-        
-        missile.lookAt(this.target.position);
-        this.scene.add(missile);
-        
-        const initialDir = new THREE.Vector3().subVectors(this.target.position, this.mesh.position).normalize();
-        
-        // Usar un vector de velocidad explícito para evitar problemas de ejes coordenados
-        this.missiles.push({ 
-            mesh: missile, 
-            target: this.target, 
-            speed: 800, 
-            velocity: initialDir.multiplyScalar(800) 
-        });
-    }
-
-    updateLasers(delta, enemyManager, environment) {
-        for(let i = this.lasers.length - 1; i >= 0; i--) {
-            const laser = this.lasers[i];
-            
-            const dir = new THREE.Vector3();
-            laser.mesh.getWorldDirection(dir);
-            laser.mesh.position.addScaledVector(dir, laser.speed * delta);
-
-            // Hit radius mucho más permisivo (Aim Assist) para no fallar tantos tiros
-            let hitRadius = 40; // Antes 15
-            if (laser.target && laser.target.userData.type === 'Drone') hitRadius = 25; // Antes 8
-
-            if (laser.target && laser.mesh.position.distanceTo(laser.target.position) < hitRadius) {
-                enemyManager.takeDamage(laser.target, this.baseDamage);
-                this.updateTargetUI();
-                this.scene.remove(laser.mesh);
-                this.lasers.splice(i, 1);
-            } else if (laser.mesh.position.distanceTo(this.mesh.position) > CONFIG.COMBAT.PLAYER_ATTACK_DIST) {
-                // Desaparecer si recorre la distancia máxima definida
-                this.scene.remove(laser.mesh);
-                this.lasers.splice(i, 1);
-            }
-        }
-    }
-
-    updateMissiles(delta, enemyManager) {
-        for(let i = this.missiles.length - 1; i >= 0; i--) {
-            const missile = this.missiles[i];
-            
-            // Seguimiento (Homing) con vector de velocidad
-            if (missile.target && missile.target.userData.hp > 0) {
-                const toTarget = new THREE.Vector3().subVectors(missile.target.position, missile.mesh.position).normalize();
-                
-                // Rotar gradualmente el vector de velocidad hacia el objetivo
-                missile.velocity.lerp(toTarget.multiplyScalar(missile.speed), 5.0 * delta);
-            }
-
-            // Avanzar usando el vector de velocidad
-            missile.mesh.position.addScaledVector(missile.velocity, delta);
-            
-            // Alinear visualmente el misil con su dirección de movimiento
-            const lookPos = new THREE.Vector3().copy(missile.mesh.position).add(missile.velocity);
-            missile.mesh.lookAt(lookPos);
-
-            // Hit radius ajustado para impacto realista
-            let hitRadius = 40;
-            if (missile.target && missile.target.userData.type === 'Drone') hitRadius = 30;
-
-            if (missile.target && missile.mesh.position.distanceTo(missile.target.position) < hitRadius) {
-                // Daño de Área Balanceado (Área reducida de 400 a 150, Daño de 30x a 15x)
-                const hitCount = enemyManager.takeDamageArea(missile.mesh.position, 150, this.baseDamage * 15);
-                this.updateTargetUI();
-                
-                // Efecto visual: Gran explosión de partículas 3D (Reemplaza al feo anillo 2D)
-                if (typeof enemyManager.createExplosion === 'function') {
-                    enemyManager.createExplosion(missile.mesh.position, 3.5); 
-                }
-
-                // Efecto visual: Destello de luz (Flash pre-cacheado para no recompilar shaders)
-                const flash = this.explosionLights[this.currentLightIndex];
-                this.currentLightIndex = (this.currentLightIndex + 1) % this.explosionLights.length;
-                flash.position.copy(missile.mesh.position);
-                flash.intensity = 20;
-
-                // Apagar luz suavemente
-                const animateFlash = () => {
-                    flash.intensity -= 1.5; 
-                    if (flash.intensity > 0) requestAnimationFrame(animateFlash);
-                };
-                animateFlash();
-
-                this.scene.remove(missile.mesh);
-                this.missiles.splice(i, 1);
-            } else if (missile.mesh.position.distanceTo(this.mesh.position) > 6000) {
-                this.scene.remove(missile.mesh);
-                this.missiles.splice(i, 1);
-            }
-        }
-    }
-
-    updateActionBar() {
-        const slotCannon = document.getElementById('slot-cannon');
-        const slotMissile = document.getElementById('slot-missile');
-        const slotShield = document.getElementById('slot-shield');
-        const slotNitro = document.getElementById('slot-nitro');
-        
-        const cdMissile = document.getElementById('cd-missile');
-        const cdShield = document.getElementById('cd-shield');
-
-        if (slotCannon) {
-            if (this.keys['1'] || this.keys[' ']) slotCannon.classList.add('active');
-            else slotCannon.classList.remove('active');
-        }
-
-        if (slotNitro) {
-            if (this.keys.shift && this.energy > 0) slotNitro.classList.add('active');
-            else slotNitro.classList.remove('active');
-        }
-
-        if (slotMissile && cdMissile) {
-            if (this.keys['2'] || this.keys['e']) slotMissile.classList.add('active');
-            else slotMissile.classList.remove('active');
-
-            const now = this.time || 0;
-            const timeSinceMissile = now - this.lastMissileTime;
-            if (timeSinceMissile < this.missileCooldown) {
-                const percent = Math.floor(100 - (timeSinceMissile / this.missileCooldown) * 100);
-                if (cdMissile.dataset.percent !== String(percent)) {
-                    cdMissile.style.height = percent + '%';
-                    cdMissile.dataset.percent = percent;
-                }
-            } else {
-                if (cdMissile.dataset.percent !== '0') {
-                    cdMissile.style.height = '0%';
-                    cdMissile.dataset.percent = '0';
-                }
-            }
-        }
-        
-        if (slotShield && cdShield) {
-            if (this.keys['3']) slotShield.classList.add('active');
-            else slotShield.classList.remove('active');
-
-            const now = this.time || 0;
-            const cooldown = this.equipment.shield.stats.cooldown;
-            const timeSinceShield = now - this.lastShieldTime;
-            if (timeSinceShield < cooldown) {
-                const percent = Math.floor(100 - (timeSinceShield / cooldown) * 100);
-                if (cdShield.dataset.percent !== String(percent)) {
-                    cdShield.style.height = percent + '%';
-                    cdShield.dataset.percent = percent;
-                }
-            } else {
-                if (cdShield.dataset.percent !== '0') {
-                    cdShield.style.height = '0%';
-                    cdShield.dataset.percent = '0';
-                }
-            }
-        }
-    }
-
-    initInventoryUI() {
-        const invModal = document.getElementById('inventory-modal');
-        const btnClose = document.getElementById('close-inv');
-        
-        if(btnClose) {
-            btnClose.addEventListener('click', () => this.toggleInventory());
-        }
-
-        const slots = document.querySelectorAll('.inv-slot');
-        slots.forEach(slot => {
-            slot.addEventListener('click', (e) => {
-                // Remove active from all
-                slots.forEach(s => s.classList.remove('active'));
-                // Add to current
-                const currentSlot = e.currentTarget;
-                currentSlot.classList.add('active');
-                
-                // Render details
-                const type = currentSlot.dataset.slot;
-                this.renderInventoryDetails(type);
-            });
-        });
-
-        // Initialize slot names
-        if (document.getElementById('slot-weapon-name')) document.getElementById('slot-weapon-name').innerText = this.equipment.weapon.name;
-        if (document.getElementById('slot-missile-name')) document.getElementById('slot-missile-name').innerText = this.equipment.missile.name;
-        if (document.getElementById('slot-shield-name')) document.getElementById('slot-shield-name').innerText = this.equipment.shield.name;
-        if (document.getElementById('slot-engine-name')) document.getElementById('slot-engine-name').innerText = this.equipment.engine.name;
-        if (document.getElementById('slot-hull-name')) document.getElementById('slot-hull-name').innerText = this.equipment.hull.name;
-    }
-
-    toggleInventory() {
-        const invModal = document.getElementById('inventory-modal');
-        if (!invModal) return;
-        
-        if (invModal.style.display === 'none') {
-            invModal.style.display = 'flex';
-            // Auto select weapon on open if nothing is active
-            if (!document.querySelector('.inv-slot.active')) {
-                const weaponSlot = document.querySelector('.inv-slot[data-slot="weapon"]');
-                if(weaponSlot) weaponSlot.click();
-            }
-        } else {
-            invModal.style.display = 'none';
-        }
-    }
-
-    renderInventoryDetails(type) {
-        const item = this.equipment[type];
-        if (!item) return;
-
-        document.getElementById('inv-item-name').innerText = item.name + ` [Lvl ${item.level}]`;
-        document.getElementById('inv-item-mfg').innerText = `Manufacturer: ${item.manufacturer}`;
-        document.getElementById('inv-item-lore').innerText = `"${item.description}"`;
-
-        const statsContainer = document.getElementById('inv-item-stats');
-        statsContainer.innerHTML = ''; // clear
-
-        for (const [key, value] of Object.entries(item.stats)) {
-            // Format key
-            const formattedKey = key.replace(/([A-Z])/g, ' $1').trim().toUpperCase();
-            
-            const row = document.createElement('div');
-            row.className = 'stat-row';
-            
-            const label = document.createElement('div');
-            label.className = 'stat-label';
-            label.innerText = formattedKey;
-            
-            const val = document.createElement('div');
-            val.className = 'stat-value';
-            val.innerText = value;
-
-            row.appendChild(label);
-            row.appendChild(val);
-            statsContainer.appendChild(row);
-        }
-    }
-
-    activateShield() {
-        const now = this.time || 0;
-        const cooldown = this.equipment.shield.stats.cooldown;
-        
-        // Evitar que el cooldown bloquee el primer uso si now < cooldown
-        if (this.lastShieldTime > 0 && now - this.lastShieldTime < cooldown) return;
-        
-        this.lastShieldTime = now;
-        this.shieldActive = true;
-        this.shieldHp = this.equipment.shield.stats.shieldHp;
-        this.shieldTimer = this.equipment.shield.stats.duration;
-        this.updateUI();
-        
-        if (this.shieldMesh) {
-            this.shieldMesh.visible = true;
-            this.shieldMesh.scale.set(0.1, 0.1, 0.1);
-            // Animación de expansión
-            const expand = () => {
-                if (!this.shieldActive) return;
-                this.shieldMesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.2);
-                if (this.shieldMesh.scale.x < 0.99) {
-                    requestAnimationFrame(expand);
-                }
-            };
-            expand();
-        }
-    }
-
-    updateShieldLogic(delta) {
-        if (!this.shieldActive) return;
-        
-        this.shieldTimer -= delta;
-        if (this.shieldTimer <= 0 || this.shieldHp <= 0) {
-            this.shieldActive = false;
-            if (this.shieldMesh) this.shieldMesh.visible = false;
-            this.updateUI();
-        } else {
-            // Efecto visual pulsante
-            if (this.shieldMesh) {
-                this.shieldMesh.material.opacity = 0.2 + 0.1 * Math.sin(this.time * 5);
-            }
-        }
-    }
-
-    takeDamage(amount) {
-        if(this.isInvulnerable || this.isDead) return;
-        this.lastDamageTime = Date.now();
-        if (this.shieldActive) {
-            this.shieldHp -= amount;
-            // Destello intenso al recibir daño el escudo
-            if (this.shieldMesh) this.shieldMesh.material.opacity = 0.8;
-            if (this.shieldHp < 0) {
-                // El daño sobrante pasa al HP real
-                this.hp += this.shieldHp;
-                this.shieldActive = false;
-                if (this.shieldMesh) this.shieldMesh.visible = false;
-            }
-        } else {
-            this.hp -= amount;
-            this.damageShake = 1.0;
-        }
-        
-        if (this.hp <= 0 && !this.isDead) {
-            this.hp = 0;
-            this.isDead = true;
-            this.die();
-        }
-        this.updateUI();
-    }
-
-    die() {
-        console.log("Player Died!");
-        const log = document.getElementById('combat-log');
-        if (log) log.innerHTML = "<span style='color:red; font-size: 18px; font-weight:bold;'>CRITICAL FAILURE: SHIP DESTROYED. RESPAWNING...</span>";
-        
-        // Explosión GIGANTE en la posición actual
-        if (this.enemyManager) {
-            this.enemyManager.createExplosion(this.position.clone(), 5.0);
-            setTimeout(() => this.enemyManager.createExplosion(this.position.clone().add(new THREE.Vector3(15, 5, 15)), 3.0), 200);
-            setTimeout(() => this.enemyManager.createExplosion(this.position.clone().add(new THREE.Vector3(-15, -5, -15)), 3.0), 400);
-            setTimeout(() => this.enemyManager.createExplosion(this.position.clone().add(new THREE.Vector3(0, 10, 0)), 4.0), 600);
-        }
-        
-        // Ocultar la nave y apagar escudos
-        this.mesh.visible = false;
-        this.shieldActive = false;
-        if (this.shieldMesh) this.shieldMesh.visible = false;
-        
-        // Set initial position to center of map
-        this.position.set(0, 50, 0);
-        this.velocity = new THREE.Vector3();
-        this.setTarget(null);
-        
-        // Pantallazo rojo estático
-        const ui = document.getElementById('ui');
-        if (ui) {
-            ui.style.transition = 'box-shadow 0.1s';
-            ui.style.boxShadow = 'inset 0 0 300px rgba(255,0,0,1)';
-        }
-
-        // Esperar 3 segundos viendo la explosión antes de reaparecer
-        setTimeout(() => {
-            // Restaurar stats
-            this.hp = this.maxHp;
-            this.energy = this.maxEnergy;
-            
-            // Teletransportar al inicio
-            this.position.set(0, 50, 0); 
-            this.camera.position.copy(this.position).add(new THREE.Vector3(0, 150, 400));
-            this.camera.lookAt(this.position);
-            
-            // Quitar pantallazo rojo
-            if (ui) {
-                ui.style.transition = 'box-shadow 2.0s';
-                ui.style.boxShadow = 'none'; 
-                setTimeout(() => { ui.style.transition = 'none'; }, 2000);
-            }
-
-            // Animación de caída desde el cielo (Warp-in)
-            this.mesh.visible = true;
-            this.mesh.position.set(0, 2000, 0); // Nace muy alto
-            
-            const drop = setInterval(() => {
-                this.mesh.position.y -= 100; // Caída hiper-rápida
-                if (this.mesh.position.y <= this.position.y) {
-                    this.mesh.position.y = this.position.y;
-                    this.isDead = false; // Devuelve el control y la cámara
-                    this.updateUI();
-                    clearInterval(drop);
-                    
-                    // Efecto de anillo expansivo al tocar el suelo
-                    this.triggerLevelUpEffect();
-                }
-            }, 16);
-
-        }, 3000);
-    }
+    /** Aplica daño PvE confirmado por el servidor. */
 
     update(delta, enemyManager, environment, controls) {
+        this.updateLevelUpFx?.(delta);
         if(this.isDead) return;
+        if (this._terrainHintCooldown > 0) this._terrainHintCooldown -= delta;
 
-        // Auto-reparación pasiva
-        if (this.hp < this.maxHp && Date.now() - this.lastDamageTime > 5000) {
-            this.hp += 15 * delta; // 15 HP por segundo
-            if (this.hp > this.maxHp) this.hp = this.maxHp;
-            this.updateUI();
-        }
-        
-        this.enemyManager = enemyManager; // Guardar referencia para las explosiones
+        this.enemyManager = enemyManager;
         if (this.isDead) return; // Congelar lógica y cámara mientras está muerto
+
+        if (this.damageShake > 0) {
+            this.damageShake = Math.max(0, this.damageShake - delta * 2.8);
+        }
 
         this.time += delta;
 
         // Lógica de Nitro restaurada
         let isUsingNitro = false;
         let currentSpeed = this.speed;
+        if (this._slowUntil && this.time < this._slowUntil) {
+            currentSpeed *= this._slowMult ?? 0.4;
+        } else {
+            if (this._slowUntil && this.time >= this._slowUntil) {
+                window.__game?.vfx?._clearPlayerSlowField?.();
+                const debuff = document.getElementById('debuff-slow');
+                if (debuff) debuff.style.display = 'none';
+            }
+            this._slowUntil = 0;
+            this._slowMult = 1;
+        }
 
         if (this.keys.shift && this.energy > 0) {
             isUsingNitro = true;
-            currentSpeed = this.speed * CONFIG.COMBAT.NITRO_SPEED_MULTIPLIER;
+            currentSpeed = nitroSpeed(this);
             this.energy -= CONFIG.COMBAT.NITRO_ENERGY_COST * delta;
             if (this.energy < 0) this.energy = 0;
+            this._nitroFxTimer = (this._nitroFxTimer || 0) - delta;
+            if (this._nitroFxTimer <= 0) {
+                const mapBusy = (window.__game?.environment?.chunkQueue?.length ?? 0) > 8;
+                if (!mapBusy) {
+                    window.__game?.vfx?.hitSparks(this.mesh.position, {
+                        color: 0xffaa33,
+                        count: 5,
+                        spread: 22,
+                        size: 6,
+                        duration: 0.18,
+                    });
+                }
+                this._nitroFxTimer = mapBusy ? 0.22 : 0.07;
+            }
             this.updateUI();
         } else {
-            // Regenerar energía si no usamos nitro
+            // Regenerar energía si no usamos nitro (usa energyRegenRate — mejora con upgrade)
             if (this.energy < this.maxEnergy) {
-                this.energy += 10 * delta;
+                this.energy += this.energyRegenRate * delta;
                 if (this.energy > this.maxEnergy) this.energy = this.maxEnergy;
                 this.updateUI();
             }
@@ -1216,22 +830,34 @@ export class Player {
 
         if (this.keys['tab']) {
             this.keys['tab'] = false;
+            const galaxy = window.__game?.galaxy;
+            if (galaxy?.usesOrbitalMinimap?.()) {
+                galaxy.onSpaceNavTabKey();
+                return;
+            }
             this.activateAutoPilot(enemyManager);
         }
 
-        if (this.keys[' ']) this.shoot();
-        if (this.keys['1']) this.shoot();
-        if (this.keys['e'] || this.keys['2']) this.shootMissile();
-        if (this.keys['3']) this.activateShield();
+        if (this._repairKeyPulse > 0) this._repairKeyPulse = Math.max(0, this._repairKeyPulse - delta);
+        if (this._shieldKeyPulse > 0) this._shieldKeyPulse = Math.max(0, this._shieldKeyPulse - delta);
+
+        if (this.keys[' '] || this.keys['1'] || this._mobileFire) this.shoot();
+        if (this.keys['2']) this.shootMissile();
 
         this.updateLasers(delta, enemyManager, environment);
         this.updateMissiles(delta, enemyManager);
+        this._tickRepairChannel(delta);
         this.updateShieldLogic(delta);
+        syncPlayerAbilityVisuals(this, window.__game?.vfx, delta);
         this.updateActionBar();
 
         // Movimiento relativo a la cámara o Autopilot
         const direction = new THREE.Vector3(0, 0, 0);
+        const galaxy = window.__game?.galaxy;
+        const skipSurfaceMove = galaxy?.isFlightMode?.() || galaxy?.isTransition?.();
+        const oldPos = this.position.clone();
 
+        if (!skipSurfaceMove) {
         if (this.autoPilot) {
             let toTarget = null;
             let isNavTarget = false;
@@ -1241,7 +867,8 @@ export class Player {
                 toTarget.y = 0;
                 isNavTarget = true;
             } else if (this.target && this.target.userData.hp > 0) {
-                toTarget = new THREE.Vector3().subVectors(this.target.position, this.position);
+                const tpos = this._resolveTargetPos(this.target);
+                toTarget = new THREE.Vector3().subVectors(tpos, this.position);
                 toTarget.y = 0;
             }
 
@@ -1252,9 +879,10 @@ export class Player {
                         toTarget.normalize();
                         this.velocity.lerp(toTarget.multiplyScalar(currentSpeed), 0.05);
                     } else {
-                        // Llegamos al destino
                         this.autoPilot = false;
                         this.navTarget = null;
+                        if (this.navMarker) this.navMarker.clearDestination();
+                        this._updateNavHud();
                         this.velocity.lerp(new THREE.Vector3(0,0,0), 0.1);
                     }
                 } else {
@@ -1277,11 +905,17 @@ export class Player {
                 this.autoPilot = false;
             }
         } else {
-            // Control Manual
-            if (this.keys.w) direction.z -= 1;
-            if (this.keys.s) direction.z += 1;
-            if (this.keys.a) direction.x -= 1;
-            if (this.keys.d) direction.x += 1;
+            const mi = this.mobileInput;
+            const useMobile = mi && (Math.abs(mi.x) > 0.08 || Math.abs(mi.z) > 0.08);
+            if (useMobile) {
+                direction.x = mi.x;
+                direction.z = mi.z;
+            } else {
+                if (this.keys.w) direction.z -= 1;
+                if (this.keys.s) direction.z += 1;
+                if (this.keys.a) direction.x -= 1;
+                if (this.keys.d) direction.x += 1;
+            }
 
             if (direction.lengthSq() > 0) {
                 direction.normalize();
@@ -1307,36 +941,63 @@ export class Player {
             }
         }
 
-        const oldPos = this.position.clone();
-
-        // Colisión con paredes de montañas (Muro invisible natural)
+        // Colisión: reglas estables en terrainRules.js (independientes del visual del mapa)
         if (environment) {
-            const wallHeight = 10000; // Aumentado al infinito para permitir al jugador VOLAR SOBRE las montañas libremente;
-            let nextX = this.position.x + this.velocity.x * delta;
-            let nextZ = this.position.z + this.velocity.z * delta;
-            
-            let hNextX = environment.getHeightAt(nextX, this.position.z);
-            let hNextZ = environment.getHeightAt(this.position.x, nextZ);
+            const nextX = this.position.x + this.velocity.x * delta;
+            const nextZ = this.position.z + this.velocity.z * delta;
+            const hHere = environment.getHeightAt(this.position.x, this.position.z);
 
-            // Montañas >120 bloquean el avance. Los corredores del terreno garantizan paso libre a las Zonas.
-            const wallLimit = 120;
-            if (hNextX > wallLimit) { this.velocity.x = 0; nextX = this.position.x; }
-            if (hNextZ > wallLimit) { this.velocity.z = 0; nextZ = this.position.z; }
+            const resolved = resolveFullMove(
+                environment,
+                this.position.x, this.position.z,
+                nextX, nextZ,
+                this.position.y
+            );
 
-            this.position.set(nextX, this.position.y, nextZ);
+            if (resolved.blocked) {
+                if (resolved.boundary) this._showWorldBoundaryHint?.();
+                else this._showTerrainBlockedHint();
+                if (resolved.x === this.position.x) this.velocity.x = 0;
+                if (resolved.z === this.position.z) this.velocity.z = 0;
+            }
 
-            this.currentTerrainHeight = environment.getHeightAt(this.position.x, this.position.z);
-            const targetHover = Math.max(0, this.currentTerrainHeight) + 35; // Flotar a 35 unidades 
-            this.position.y += (targetHover - this.position.y) * 0.1; // Suavizado
+            this.position.set(resolved.x, this.position.y, resolved.z);
+
+            const safe = clampPointToDisc(this.position.x, this.position.z, WORLD_MAP.playerClampScale);
+            if (safe.clamped) {
+                this.position.x = safe.x;
+                this.position.z = safe.z;
+                this.velocity.set(0, 0, 0);
+            }
+
+            this.currentTerrainHeight = hHere;
+            const targetHover = Math.max(0, this.currentTerrainHeight) + (this.hoverHeight || 35);
+            const flightPhase = window.__game?.galaxy?.phase;
+            const takingOff = window.__game?.galaxy?.isFlightMode?.()
+                || window.__game?.galaxy?.isTransition?.();
+            const climbing = window.__game?.galaxy?.isAtmosphericMode?.();
+            if (flightPhase === 'orbit' || takingOff || climbing) {
+                // Y libre durante despegue / órbita
+            } else if (flightPhase === 'climb' || flightPhase === 'atmosphere') {
+                if (this.position.y < targetHover) {
+                    this.position.y += (targetHover - this.position.y) * 0.06;
+                }
+            } else {
+                this.position.y += (targetHover - this.position.y) * 0.1;
+            }
         } else {
             this.position.addScaledVector(this.velocity, delta);
         }
+        } // skipSurfaceMove
 
         // Rotar la nave principal visualmente
+        const flightCtrl = window.__game?.galaxy?.usesFlightControls?.();
         let faceTarget = null;
+        if (!flightCtrl) {
         if (this.target && this.target.userData.hp > 0) {
             // Vector hacia el enemigo
-            const toEnemy = new THREE.Vector3().subVectors(this.target.position, this.position);
+            const tpos = this._resolveTargetPos(this.target);
+            const toEnemy = new THREE.Vector3().subVectors(tpos, this.position);
             toEnemy.y = 0;
             if (toEnemy.lengthSq() > 0.001) toEnemy.normalize();
 
@@ -1373,8 +1034,10 @@ export class Player {
             );
             this.mesh.quaternion.slerp(targetQuaternion, 0.1);
         }
+        }
 
         // Inclinación visual (Roll y Pitch) aplicada al grupo interno para NO corromper el quaternion de movimiento
+        if (!flightCtrl) {
         const localVelocity = this.velocity.clone().applyQuaternion(this.mesh.quaternion.clone().invert());
         
         const targetRoll = localVelocity.x * 0.001;
@@ -1382,76 +1045,104 @@ export class Player {
 
         const targetPitch = localVelocity.z * 0.0002;
         this.visualGroup.rotation.x += (targetPitch - this.visualGroup.rotation.x) * 0.1;
+        } else {
+            this.visualGroup.rotation.x *= 0.85;
+            this.visualGroup.rotation.z *= 0.85;
+        }
 
         // Hover suave extra
         const hoverOffset = Math.sin(this.time * 3) * 0.5;
         this.mesh.position.copy(this.position);
         this.mesh.position.y += hoverOffset;
 
-        // Estelas de Motor (Trails Físicos Dinámicos)
+        // Estelas de motor — throttled (antes: 1 mesh/anclaje/frame = lag severo)
         if (this.engineAnchors) {
-            if (!this.particlePool) this.particlePool = []; 
-            
-            const isIdle = this.velocity.lengthSq() < 50;
+            if (!this.particlePool) this.particlePool = [];
+            this._trailEmitTick = (this._trailEmitTick ?? 0) + 1;
 
-            this.engineAnchors.forEach((anchor, index) => {
-                // Obtener posición absoluta 3D del anclaje
-                const worldPos = new THREE.Vector3();
-                anchor.getWorldPosition(worldPos);
-                
-                let p;
-                if (this.particlePool.length > 0) {
-                    p = this.particlePool.pop();
-                    p.visible = true;
-                } else {
-                    p = new THREE.Mesh(this.particleGeo, this.particleMat);
-                    this.scene.add(p);
+            const perf = window.__game?._perfTier ?? 'normal';
+            const isIdle = this.velocity.lengthSq() < 50;
+            const emitEvery = perf === 'critical' ? 10
+                : perf === 'economy' ? 6
+                    : isUsingNitro ? 2
+                        : isIdle ? 8
+                            : 4;
+            const maxTrail = perf === 'critical' ? 10
+                : perf === 'economy' ? 18
+                    : 32;
+
+            if (this._trailEmitTick % emitEvery === 0 && this.trailParticles.length < maxTrail) {
+                const anchors = this.engineAnchors;
+                const step = perf === 'normal' ? 1 : 2;
+                for (let index = 0; index < anchors.length; index += step) {
+                    if (this.trailParticles.length >= maxTrail) break;
+                    const anchor = anchors[index];
+                    const worldPos = this._trailWorldPos || (this._trailWorldPos = new THREE.Vector3());
+                    anchor.getWorldPosition(worldPos);
+
+                    let p;
+                    if (this.particlePool.length > 0) {
+                        p = this.particlePool.pop();
+                        p.visible = true;
+                    } else {
+                        p = new THREE.Mesh(this.particleGeo, this.particleMat);
+                        this.scene.add(p);
+                    }
+
+                    p.position.copy(worldPos);
+                    const baseLife = (index >= 3) ? 1.0 : 1.5;
+                    p.userData.life = isIdle ? baseLife * 0.5 : baseLife * 0.8;
+                    p.userData.baseThickness = (index >= 3) ? 2.5 : 1.0;
+
+                    if (isUsingNitro) p.scale.setScalar(2.0 * p.userData.baseThickness);
+                    else if (isIdle) p.scale.setScalar(0.6 * p.userData.baseThickness);
+                    else p.scale.setScalar(1.0 * p.userData.baseThickness);
+
+                    this.trailParticles.push(p);
                 }
-                
-                p.position.copy(worldPos);
-                
-                // La longitud física del rastro es natural por la velocidad de la nave.
-                let baseLife = (index >= 3) ? 1.0 : 1.5; 
-                
-                if (isIdle) {
-                    p.userData.life = baseLife * 0.5; // Bolita de fuego en ralentí
-                } else {
-                    p.userData.life = baseLife * 0.8; // Vida normal y optimizada
-                }
-                
-                // Grosor base
-                p.userData.baseThickness = (index >= 3) ? 2.5 : 1.0; 
-                
-                if (isUsingNitro) p.scale.setScalar(2.0 * p.userData.baseThickness);
-                else if (isIdle) p.scale.setScalar(0.6 * p.userData.baseThickness);
-                else p.scale.setScalar(1.0 * p.userData.baseThickness);
-                
-                this.trailParticles.push(p);
-            });
+            }
         }
 
-        for(let i = this.trailParticles.length - 1; i >= 0; i--) {
+        const camPos = this.camera.position;
+        for (let i = this.trailParticles.length - 1; i >= 0; i--) {
             const p = this.trailParticles[i];
-            // Consumir el fuego rápido (Rastro ajustado y cero lag)
-            p.userData.life -= delta * 4.0; 
-            if(p.userData.life <= 0) {
-                p.visible = false; 
+            p.userData.life -= delta * 4.0;
+            if (p.userData.life <= 0) {
+                p.visible = false;
                 this.trailParticles.splice(i, 1);
-                this.particlePool.push(p); // Devolver al Pool
+                this.particlePool.push(p);
             } else {
                 p.scale.setScalar(p.userData.life * p.userData.baseThickness);
-                p.lookAt(this.camera.position); 
+                if ((this._frame ?? 0) % 2 === 0) p.lookAt(camPos);
             }
         }
 
         // Desplazar la cámara junto con la nave (OrbitControls usa target)
         const movementDelta = this.position.clone().sub(oldPos);
-        if (movementDelta.lengthSq() > 0) {
+        if (movementDelta.lengthSq() > 0 && !window.__game?.galaxy?.handlesCamera?.()) {
             this.camera.position.add(movementDelta);
+            if (this._cameraRecenterFrom) this._cameraRecenterFrom.add(movementDelta);
+            if (this._cameraRecenterGoal) this._cameraRecenterGoal.add(movementDelta);
         }
 
-        // Alineación automática de cámara en Combate (Pirate Galaxy Style)
-        if (this.target && this.target.userData.hp > 0 && !this.keys['rightClick']) {
+        this._updateCameraRecenter(delta);
+        this._updateCameraManualIdle(delta);
+        if (!window.__game?.galaxy?.handlesCamera?.()) {
+        this._updateChaseCamera(delta);
+        }
+
+        const cfg = getControlState();
+        const recentering = this._cameraRecenterT < 1;
+        const manualCamera = this._cameraManualIdle > 0;
+
+        // Vista de combate opcional (orbita hacia el enemigo apuntado)
+        if (
+            !window.__game?.galaxy?.handlesCamera?.()
+            && cfg.combatCameraFollow
+            && this.target && this.target.userData.hp > 0
+            && !this.keys['rightClick'] && !this._mobileCameraDrag
+            && !manualCamera && !recentering
+        ) {
             // Calcular vector desde el objetivo hasta el jugador
             const toPlayer = new THREE.Vector3().subVectors(this.position, this.target.position).normalize();
             toPlayer.y = 0; // Plano XZ
@@ -1480,7 +1171,7 @@ export class Player {
         }
 
         // Colisión de Cámara: Evita que la cámara se meta dentro de una montaña
-        if (environment) {
+        if (environment && !window.__game?.galaxy?.handlesCamera?.()) {
             let camTerrainHeight = environment.getHeightAt(this.camera.position.x, this.camera.position.z);
             if (this.camera.position.y < camTerrainHeight + 15) {
                 // Si la cámara está dentro o muy cerca de la montaña, la subimos por encima
@@ -1492,7 +1183,7 @@ export class Player {
                 this.camera.position.add(toPlayer.multiplyScalar(0.05));
             }
         }
-        if (controls) {
+        if (controls && !window.__game?.galaxy?.handlesCamera?.()) {
             controls.target.copy(this.position);
             controls.update();
         }

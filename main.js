@@ -11,12 +11,22 @@ function createWindow() {
     }
   });
 
-  // In development, we load from Vite dev server if running, else load file.
-  // We'll determine this by checking if the dev url is reachable or simply by env.
-  // For simplicity, we'll try to load localhost, and if it fails, load dist.
-  win.loadURL('http://localhost:5173').catch(() => {
-    win.loadFile(path.join(__dirname, 'dist', 'index.html'));
-  });
+  const devUrl = process.env.WARSPACE_DEV_URL || 'http://127.0.0.1:5174';
+  const distIndex = path.join(__dirname, 'dist', 'index.html');
+
+  async function loadGame() {
+    try {
+      await win.loadURL(devUrl);
+    } catch {
+      try {
+        await win.loadFile(distIndex);
+      } catch {
+        win.loadURL(`data:text/html,<h2>WarSpace</h2><p>Ejecuta <code>npm start</code> desde la raíz del proyecto.</p>`);
+      }
+    }
+  }
+
+  loadGame();
 }
 
 app.whenReady().then(() => {

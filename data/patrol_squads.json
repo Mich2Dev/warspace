@@ -1,0 +1,70 @@
+{
+  "squads": [
+    {
+      "id": "train_northwest",
+      "name": "Patrulla Filo Mantis",
+      "regionId": "northwest_mantis",
+      "formation": "column",
+      "loop": true,
+      "speed": 96,
+      "waypoints": [
+        { "x": 2000, "z": 8000 },
+        { "x": 6000, "z": 7500 },
+        { "x": 8000, "z": 4500 },
+        { "x": 5000, "z": 3000 },
+        { "x": 1000, "z": 5000 },
+        { "x": 2000, "z": 8000 }
+      ],
+      "slots": [
+        { "index": 0, "role": "squad_commander", "patrolDesign": "comandante", "enemyType": "Zona3" },
+        { "index": 1, "role": "squad_escort", "patrolDesign": "escolta", "enemyType": "Zona2" },
+        { "index": 2, "role": "squad_missile", "patrolDesign": "droid", "enemyType": "Zona1" },
+        { "index": 3, "role": "squad_missile", "patrolDesign": "droid", "enemyType": "Zona1" }
+      ]
+    },
+    {
+      "id": "train_southeast",
+      "name": "Patrulla Madriguera",
+      "regionId": "southeast_scavenger",
+      "formation": "column",
+      "loop": true,
+      "speed": 98,
+      "waypoints": [
+        { "x": 3000, "z": -3000 },
+        { "x": 7000, "z": -4000 },
+        { "x": 7000, "z": -8000 },
+        { "x": 4000, "z": -7000 },
+        { "x": 1000, "z": -5000 },
+        { "x": 3000, "z": -3000 }
+      ],
+      "slots": [
+        { "index": 0, "role": "squad_commander", "patrolDesign": "comandante", "enemyType": "Zona3" },
+        { "index": 1, "role": "squad_escort", "patrolDesign": "escolta", "enemyType": "Zona2" },
+        { "index": 2, "role": "squad_missile", "patrolDesign": "droid", "enemyType": "Zona1" },
+        { "index": 3, "role": "squad_missile", "patrolDesign": "droid", "enemyType": "Zona1" }
+      ]
+    },
+    {
+      "id": "train_far_west",
+      "name": "Patrulla Vanguardia",
+      "regionId": "far_west_command",
+      "formation": "column",
+      "loop": true,
+      "speed": 94,
+      "waypoints": [
+        { "x": -2000, "z": -4000 },
+        { "x": -6000, "z": -5000 },
+        { "x": -7000, "z": -8000 },
+        { "x": -4000, "z": -8000 },
+        { "x": -1000, "z": -6000 },
+        { "x": -2000, "z": -4000 }
+      ],
+      "slots": [
+        { "index": 0, "role": "squad_commander", "patrolDesign": "comandante", "enemyType": "Zona3" },
+        { "index": 1, "role": "squad_escort", "patrolDesign": "escolta", "enemyType": "Zona2" },
+        { "index": 2, "role": "squad_missile", "patrolDesign": "droid", "enemyType": "Zona1" },
+        { "index": 3, "role": "squad_missile", "patrolDesign": "droid", "enemyType": "Zona1" }
+      ]
+    }
+  ]
+}

@@ -5,3 +5,4 @@ dist/
 .DS_Store
 Thumbs.db
 public/models/
+scripts/cloudflared.exe

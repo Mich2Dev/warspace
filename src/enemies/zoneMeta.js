@@ -1,0 +1,60 @@
+import { SPECIES_DISPLAY } from '../enemyNames.js';
+
+export const ZONE_META = {
+    Zona1: {
+        name: SPECIES_DISPLAY.Zona1,
+        minimapClass: 'minimap-e1',
+        minimapText: 'E1',
+        dangerColor: 0xff0000,
+        laser: { color: 0xffff00, thickness: 3.5, spawnOffset: 25, lateralOffset: 12 },
+        nameOffset: 95,
+    },
+    Zona2: {
+        name: SPECIES_DISPLAY.Zona2,
+        minimapClass: 'minimap-e2',
+        minimapText: 'E2',
+        dangerColor: 0x00aaff,
+        laser: { color: 0xff8800, thickness: 3.5, spawnOffset: 15, lateralOffset: 10 },
+        nameOffset: 58,
+    },
+    Zona3: {
+        name: SPECIES_DISPLAY.Zona3,
+        minimapClass: 'minimap-e3',
+        minimapText: 'E3',
+        dangerColor: 0xaa00ff,
+        laser: { color: 0xaa00ff, thickness: 5.0, spawnOffset: 30, lateralOffset: 15 },
+        nameOffset: 64,
+    },
+    Boss: {
+        name: 'JEFE DE MUNDO',
+        minimapClass: 'minimap-e3',
+        minimapText: 'BOSS',
+        dangerColor: 0xffaa00,
+        laser: { color: 0xff0000, thickness: 12.0, spawnOffset: 50, lateralOffset: 30 },
+        nameOffset: 150,
+    },
+    Invader_Alpha: {
+        name: SPECIES_DISPLAY.Invader_Alpha,
+        minimapClass: 'minimap-fighter',
+        minimapText: 'IA',
+        dangerColor: 0xff5533,
+        laser: { color: 0xff5533, thickness: 4.0, spawnOffset: 22, lateralOffset: 12 },
+        nameOffset: 75,
+    },
+    Invader_Beta: {
+        name: SPECIES_DISPLAY.Invader_Beta,
+        minimapClass: 'minimap-e2',
+        minimapText: 'IB',
+        dangerColor: 0x33aaff,
+        laser: { color: 0x33aaff, thickness: 4.3, spawnOffset: 24, lateralOffset: 12 },
+        nameOffset: 82,
+    },
+    Invader_Gamma: {
+        name: SPECIES_DISPLAY.Invader_Gamma,
+        minimapClass: 'minimap-e3',
+        minimapText: 'IG',
+        dangerColor: 0xbb44ff,
+        laser: { color: 0xbb44ff, thickness: 5.4, spawnOffset: 27, lateralOffset: 14 },
+        nameOffset: 95,
+    },
+};

@@ -1,202 +1,843 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WarSpace</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="screen-orientation" content="landscape">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>WarSpace Galaxy</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div id="loading-screen">
-        <div id="loading-text">Loading Assets: 0%</div>
-        <div class="loading-bar-container">
-            <div id="loading-bar"></div>
+
+<!-- ══════════════════════════════════════════
+     LOADING SCREEN
+══════════════════════════════════════════ -->
+<div id="loading-screen">
+    <div class="load-logo">⬡</div>
+    <div id="loading-text">Iniciando sistemas — 0%</div>
+    <div class="loading-bar-container">
+        <div id="loading-bar"></div>
+        <div class="loading-bar-glow"></div>
+    </div>
+    <div class="load-subtitle">WARSPACE GALAXY — checkpoint NMS</div>
+
+    <div id="multiplayer-join" class="mp-join-panel">
+        <h2 class="mp-join-title">Entrar al sector</h2>
+        <p id="mp-load-hint" class="mp-load-hint">Cargando mapa…</p>
+        <label class="mp-field">
+            <span>Tu nick</span>
+            <input type="text" id="mp-nick-input" maxlength="18" placeholder="Ej. Nova, Rex…" autocomplete="off">
+        </label>
+        <p class="mp-field-hint mp-join-note">Mismo enlace para todos los pilotos en esta sala.</p>
+        <div class="mp-join-actions mp-join-actions-single">
+            <button type="button" id="mp-join-btn" class="mp-btn mp-btn-primary" disabled>Entrar a la sala</button>
         </div>
     </div>
-    
-    <div id="ui" style="display: none;">
-        <div id="player-status">
-            <h2>PLAYER SHIP <span id="player-level" style="color:#00ffcc; font-size: 14px;">(Lvl 1)</span></h2>
-            <div class="bar-container" style="position:relative;">
-                <div id="hp-bar" class="bar hp"></div>
-                <div id="hp-text" style="position:absolute; top:0; left:0; width:100%; height:100%; text-align:center; line-height:20px; font-size:12px; color:white; font-weight:bold; z-index:2; text-shadow:1px 1px 2px black;">100 / 100 HP</div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     MAIN HUD
+══════════════════════════════════════════ -->
+<div id="ui" style="display: none;">
+
+    <div id="galaxy-hud" class="galaxy-hud" style="display:none;">
+        <div id="galaxy-mode-label" class="galaxy-mode-label">SUPERFICIE</div>
+        <div id="galaxy-target-hint" class="galaxy-target-hint">WASD · Numpad8/↑ vuelo (ratón al instante) · Numpad5 reentrar cerca</div>
+    </div>
+
+    <!-- ── Pilot profile chip ── -->
+    <div id="mp-online-chip" class="hud-panel mp-online-chip" hidden title="Estado de la sala"></div>
+    <div id="pilot-profile-chip" class="hud-panel pilot-chip" title="Perfil de piloto [P]">
+        <span class="pilot-chip-icon">◉</span>
+        <div class="pilot-chip-text">
+            <span id="pilot-callsign">Piloto</span>
+            <span id="pilot-rank" class="pilot-rank">Recluta</span>
+        </div>
+    </div>
+
+    <!-- ── Barras en mundo (vida sobre nave / objetivo) ── -->
+    <div id="world-hud" aria-hidden="true">
+        <div id="player-world-bar" class="world-bar-stack player" hidden>
+            <div class="world-bar-row hp">
+                <div class="world-bar-track"><div id="player-world-hp-fill" class="world-bar-fill"></div></div>
             </div>
-            <div class="bar-container" style="position:relative;">
-                <div id="energy-bar" class="bar energy"></div>
-                <div id="energy-text" style="position:absolute; top:0; left:0; width:100%; height:100%; text-align:center; line-height:20px; font-size:12px; color:white; font-weight:bold; z-index:2; text-shadow:1px 1px 2px black;">100 / 100 EN</div>
+            <div class="world-bar-row energy">
+                <div class="world-bar-track"><div id="player-world-en-fill" class="world-bar-fill"></div></div>
             </div>
-            <div class="bar-container" id="shield-bar-container" style="position:relative; display:none;">
-                <div id="shield-bar" class="bar" style="background-color: #00ffff; width: 100%;"></div>
-                <div id="shield-text" style="position:absolute; top:0; left:0; width:100%; height:100%; text-align:center; line-height:20px; font-size:12px; color:white; font-weight:bold; z-index:2; text-shadow:1px 1px 2px black;">150 / 150 SHIELD</div>
-            </div>
-            <div class="bar-container" style="position:relative;">
-                <div id="xp-bar" class="bar xp" style="width: 0%; background-color: #aa00ff;"></div>
-                <div id="xp-text" style="position:absolute; top:0; left:0; width:100%; height:100%; text-align:center; line-height:20px; font-size:12px; color:white; font-weight:bold; z-index:2; text-shadow:1px 1px 2px black;">0 / 100 XP</div>
+            <div id="player-world-sh-row" class="world-bar-row shield" hidden>
+                <div class="world-bar-track"><div id="player-world-sh-fill" class="world-bar-fill"></div></div>
             </div>
         </div>
-        <div id="target-status" style="display: none;">
-            <h2>Target: <span id="target-name">None</span> <span id="target-level" style="color:#ffaa00; font-size: 14px;"></span></h2>
-            <div class="bar-container" style="position:relative;">
-                <div id="target-hp-bar" class="bar hp"></div>
-                <div id="target-hp-text" style="position:absolute; top:0; left:0; width:100%; height:100%; text-align:center; line-height:20px; font-size:12px; color:white; font-weight:bold; z-index:2; text-shadow:1px 1px 2px black;">100 / 100 HP</div>
+        <div id="target-world-bar" class="world-bar-stack target" hidden>
+            <span id="target-world-name" class="world-bar-name"></span>
+            <div class="world-bar-row hp">
+                <div class="world-bar-track"><div id="target-world-hp-fill" class="world-bar-fill"></div></div>
+            </div>
+            <div id="target-world-sh-row" class="world-bar-row shield" hidden>
+                <div class="world-bar-track"><div id="target-world-sh-fill" class="world-bar-fill"></div></div>
             </div>
         </div>
-        <div id="combat-log">Ready. WASD to move. Click enemy to target, SPACE to shoot.</div>
-        
-        <!-- Mission Panel (Top Left, below Player Status) -->
-        <div id="mission-panel" style="display: none;">
-            <div class="mission-header">ACTIVE MISSION</div>
-            <div id="mission-title">Mission Title</div>
-            <div id="mission-objective">- Objective goes here</div>
+    </div>
+
+    <div id="incoming-missile-banner" class="incoming-missile-banner hidden" aria-live="polite"></div>
+
+    <!-- ── XP — franja inferior ── -->
+    <div id="xp-strip-hud">
+        <div class="xp-strip-track">
+            <div id="xp-strip-fill" class="xp-strip-fill"></div>
+            <div id="xp-strip-glow" class="xp-strip-glow"></div>
+        </div>
+        <span id="xp-strip-label" class="xp-strip-label">NV 1</span>
+    </div>
+
+    <!-- ── Player Status — nivel (barras legacy ocultas, datos vía JS) ── -->
+    <div id="player-status" class="hud-panel hud-panel-compact">
+        <div class="panel-header">
+            <span class="panel-icon cyan">⬡</span>
+            <span class="panel-title">NAVE</span>
+            <span id="player-level" class="panel-badge">NIV 1</span>
+            <span id="debuff-slow" class="panel-badge" style="display:none;background:rgba(68,221,255,0.22);color:#66eeff;margin-left:6px;">ION</span>
         </div>
 
-        <!-- Transmission Panel (Bottom Center) -->
-        <div id="transmission-panel" style="display: none;">
-            <button id="transmission-toggle" onclick="toggleTransmission()">[-]</button>
-            <div id="transmission-avatar"></div>
-            <div class="transmission-content">
-                <div id="transmission-name">COMMANDER</div>
-                <div id="transmission-text">Incoming transmission...</div>
+        <div class="stat-row legacy-hud-stat">
+            <span class="stat-icon" style="color:#ff4455">♥</span>
+            <div class="stat-bar-wrap">
+                <div class="bar-track">
+                    <div id="hp-bar" class="bar hp"></div>
+                </div>
+            </div>
+            <span id="hp-text" class="stat-val">100/100</span>
+        </div>
+
+        <div class="stat-row legacy-hud-stat">
+            <span class="stat-icon" style="color:#0099ff">⚡</span>
+            <div class="stat-bar-wrap">
+                <div class="bar-track">
+                    <div id="energy-bar" class="bar energy"></div>
+                </div>
+            </div>
+            <span id="energy-text" class="stat-val">100/100</span>
+        </div>
+
+        <!-- Shield row — shown/hidden via JS on wrapper -->
+        <div id="shield-bar-container" style="display:none;">
+            <div class="stat-row legacy-hud-stat">
+                <span class="stat-icon" style="color:#00ffee">◈</span>
+                <div class="stat-bar-wrap">
+                    <div class="bar-track">
+                        <div id="shield-bar" class="bar shield"></div>
+                    </div>
+                </div>
+                <span id="shield-text" class="stat-val">150/150</span>
             </div>
         </div>
-        
-        <script>
-            function toggleTransmission() {
-                const panel = document.getElementById('transmission-panel');
-                if (panel.classList.contains('minimized')) {
-                    panel.classList.remove('minimized');
-                    document.getElementById('transmission-toggle').innerText = '[-]';
-                } else {
-                    panel.classList.add('minimized');
-                    document.getElementById('transmission-toggle').innerText = '[+]';
-                }
+
+        <div class="stat-row xp-row legacy-hud-stat">
+            <span class="stat-icon" style="color:#aa44ff">★</span>
+            <div class="stat-bar-wrap">
+                <div class="bar-track">
+                    <div id="xp-bar" class="bar xp" style="width:0%"></div>
+                </div>
+            </div>
+            <span id="xp-text" class="stat-val xp-val">0/100</span>
+        </div>
+    </div>
+
+    <!-- ── Target Status — legacy oculto; barra sobre enemigo ── -->
+    <div id="target-status" class="hud-panel target-panel legacy-hud-panel" style="display: none;">
+        <div class="panel-header">
+            <span class="panel-icon red">⬡</span>
+            <div class="target-name-wrap">
+                <span class="panel-title target-title">ANÁLISIS TÁCTICO</span>
+                <span id="target-name" class="target-name-text">Ninguno</span>
+            </div>
+            <span id="target-level" class="panel-badge amber"></span>
+        </div>
+        <div class="target-intel-meta">
+            <span id="target-intel-faction" class="intel-faction"></span>
+            <span id="target-intel-role" class="intel-role"></span>
+        </div>
+        <div class="stat-row legacy-hud-stat">
+            <span class="stat-icon" style="color:#ff4444">♥</span>
+            <div class="stat-bar-wrap">
+                <div class="bar-track">
+                    <div id="target-hp-bar" class="bar hp enemy" style="width:0%"></div>
+                </div>
+            </div>
+            <span id="target-hp-text" class="stat-val">0 HP</span>
+        </div>
+        <p id="target-intel-lore" class="target-intel-lore"></p>
+        <div id="target-intel-abilities" class="target-intel-abilities"></div>
+        <div class="target-intel-row"><span class="intel-label">Fortalezas</span><span id="target-intel-strengths"></span></div>
+        <div class="target-intel-row"><span class="intel-label">Debilidades</span><span id="target-intel-weaknesses"></span></div>
+        <p id="target-intel-tip" class="target-intel-tip"></p>
+    </div>
+
+    <!-- ── Combat Log ── -->
+    <div id="combat-log">
+        <span class="log-prefix">▸</span>
+        <span id="log-text">Listo — J misiones · H hangar · E eventos · B mercado · P perfil</span>
+    </div>
+
+    <!-- ── Mission Panel — below player status ── -->
+    <div id="mission-panel" style="display: none;">
+        <div class="mp-accent-bar"></div>
+        <div class="mp-inner">
+            <div class="mp-tag">MISION ACTIVA</div>
+            <div id="mission-title">Titulo de mision</div>
+            <div id="mission-objective">— Objetivo de la mision</div>
+            <button type="button" id="mission-go-btn" class="mission-go-btn">IR A ZONA</button>
+        </div>
+    </div>
+
+    <!-- ── Transmission Panel ── -->
+    <div id="transmission-panel" style="display: none;">
+        <button id="transmission-toggle" onclick="toggleTransmission()">[-]</button>
+        <div id="transmission-avatar"></div>
+        <div class="transmission-content">
+            <div id="transmission-name">COMANDANTE</div>
+            <div id="transmission-text">Transmision entrante...</div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTransmission() {
+            const panel = document.getElementById('transmission-panel');
+            if (panel.classList.contains('minimized')) {
+                panel.classList.remove('minimized');
+                document.getElementById('transmission-toggle').innerText = '[-]';
+            } else {
+                panel.classList.add('minimized');
+                document.getElementById('transmission-toggle').innerText = '[+]';
             }
-        </script>
+        }
+    </script>
 
-        <div id="action-bar">
-            <div class="action-slot" id="slot-cannon">
-                <div class="icon-label">1</div>
-                <div class="icon-name">CANNON</div>
-            </div>
-            <div class="action-slot" id="slot-missile">
-                <div class="icon-label">2</div>
-                <div class="icon-name">MISSILE</div>
-                <div class="cooldown-overlay" id="cd-missile"></div>
-            </div>
-            <div class="action-slot" id="slot-shield">
-                <div class="icon-label">3</div>
-                <div class="icon-name">SHIELD</div>
-                <div class="cooldown-overlay" id="cd-shield"></div>
-            </div>
-            <div class="action-slot" id="slot-nitro">
-                <div class="icon-label">SHFT</div>
-                <div class="icon-name">NITRO</div>
-            </div>
+    <!-- ── Action Bar ── -->
+    <div id="action-bar">
+        <div class="action-slot" id="slot-cannon">
+            <span class="slot-key">1</span>
+            <span class="slot-symbol">✦</span>
+            <span class="slot-name">CAÑÓN</span>
+            <div class="cooldown-overlay" id="cd-cannon"></div>
+            <div class="charge-ring" aria-hidden="true"></div>
         </div>
-
-        <div id="minimap">
-            <div class="minimap-bg"></div>
-            <div id="minimap-waypoint" style="display:none; position:absolute; width:12px; height:12px; background:#ffaa00; border-radius:50%; box-shadow:0 0 10px #ffaa00, 0 0 20px #ffaa00; z-index:3; transform:translate(-50%, -50%); animation: blink 1s infinite alternate;"></div>
-            <div id="minimap-player"></div>
-            <div id="minimap-enemies"></div>
+        <div class="action-slot" id="slot-missile">
+            <span class="slot-key">2</span>
+            <span class="slot-symbol">◈</span>
+            <span class="slot-name">MISILES</span>
+            <div class="cooldown-overlay" id="cd-missile"></div>
+            <div class="charge-ring" aria-hidden="true"></div>
         </div>
-
-        <div id="system-menu">
-            <button id="btn-inventory" onclick="document.dispatchEvent(new KeyboardEvent('keydown', {'key': 'i'}))">⚙️ INVENTORY [I]</button>
-            <button id="btn-missions" onclick="document.dispatchEvent(new KeyboardEvent('keydown', {'key': 'j'}))">📋 MISSIONS [J]</button>
-            <button id="btn-hangar" onclick="document.dispatchEvent(new KeyboardEvent('keydown', {'key': 'h'}))">🚀 HANGAR [H]</button>
+        <div class="action-slot slot-repair" id="slot-repair">
+            <span class="slot-key">3</span>
+            <span class="slot-symbol">✚</span>
+            <span class="slot-name">REPARAR</span>
+            <div class="cooldown-overlay" id="cd-repair"></div>
+            <div class="charge-ring" aria-hidden="true"></div>
         </div>
-
-        <!-- Inventory / Ship Menu -->
-        <div id="inventory-modal" class="game-modal" style="display: none;">
-            <div class="inv-header">
-                <h2>SHIP EQUIPMENT</h2>
-                <button id="close-inv">X</button>
-            </div>
-            <div class="inv-body">
-                <div class="inv-slots">
-                    <div class="inv-slot" data-slot="weapon">
-                        <div class="slot-type">WEAPON</div>
-                        <div class="slot-name" id="slot-weapon-name">Empty</div>
-                    </div>
-                    <div class="inv-slot" data-slot="missile">
-                        <div class="slot-type">MISSILE</div>
-                        <div class="slot-name" id="slot-missile-name">Empty</div>
-                    </div>
-                    <div class="inv-slot" data-slot="shield">
-                        <div class="slot-type">SHIELD</div>
-                        <div class="slot-name" id="slot-shield-name">Empty</div>
-                    </div>
-                    <div class="inv-slot" data-slot="engine">
-                        <div class="slot-type">ENGINE</div>
-                        <div class="slot-name" id="slot-engine-name">Empty</div>
-                    </div>
-                    <div class="inv-slot" data-slot="hull">
-                        <div class="slot-type">HULL</div>
-                        <div class="slot-name" id="slot-hull-name">Empty</div>
-                    </div>
-                </div>
-                <div class="inv-details">
-                    <h3 id="inv-item-name">Select a component</h3>
-                    <div class="inv-item-mfg" id="inv-item-mfg"></div>
-                    <div class="inv-item-lore" id="inv-item-lore"></div>
-                    <div class="inv-item-stats" id="inv-item-stats"></div>
-                </div>
-            </div>
+        <div class="action-slot slot-shield" id="slot-shield">
+            <span class="slot-key">4</span>
+            <span class="slot-symbol">⬡</span>
+            <span class="slot-name">ESCUDO</span>
+            <div class="cooldown-overlay" id="cd-shield"></div>
+            <div class="charge-ring" aria-hidden="true"></div>
         </div>
-
-        <!-- Mission Board Modal -->
-        <div id="mission-board-modal" class="game-modal" style="display: none;">
-            <div class="inv-header">
-                <h2>QUEST BOARD</h2>
-                <button id="close-mission-board">X</button>
-            </div>
-            <div class="inv-body">
-                <div class="inv-slots" id="mission-list-container">
-                    <!-- Missions injected here -->
-                </div>
-                <div class="inv-details">
-                    <h3 id="mb-title" style="color: #aa00ff; margin-top:0;">Select a Mission</h3>
-                    <p id="mb-desc">Review the available contracts on Ares-V.</p>
-                    <p id="mb-objective" style="color: #ccc;"></p>
-                    <button id="mb-accept-btn" style="display:none; margin-top:20px; background: rgba(170, 0, 255, 0.2); border: 2px solid #aa00ff; color: white; padding: 10px 20px; cursor:pointer; font-weight:bold;">ACCEPT MISSION</button>
-                </div>
-            </div>
+        <div class="action-slot" id="slot-nitro">
+            <span class="slot-key">⇑</span>
+            <span class="slot-symbol">▲</span>
+            <span class="slot-name">TURBO</span>
+            <div class="charge-ring" aria-hidden="true"></div>
         </div>
-
-        <!-- Hangar Modal -->
-        <div id="hangar-modal" class="game-modal" style="display: none;">
-            <div class="inv-header">
-                <h2>SHIP HANGAR</h2>
-                <button id="close-hangar">X</button>
-            </div>
-            <div class="inv-body">
-                <div class="inv-slots">
-                    <div class="inv-slot active">
-                        <div class="slot-type">LVL 1</div>
-                        <div class="slot-name">Aegis Shock</div>
-                    </div>
-                    <div class="inv-slot" id="hangar-ship-5">
-                        <div class="slot-type">LVL 5</div>
-                        <div class="slot-name">Heavy Juggernaut</div>
-                        <div id="hangar-req-5" style="color:#ffaa00; font-size:10px; margin-top:5px;">Requires Lvl 5</div>
-                    </div>
-                </div>
-                <div class="inv-details">
-                    <h3 style="color: #00ffcc; margin-top:0;">Heavy Juggernaut</h3>
-                    <p>Una nave de asalto pesado. Gran capacidad ofensiva y blindaje superior. Sacrifica algo de velocidad.</p>
-                    <div style="background: rgba(0,0,0,0.5); padding: 10px; border-left: 3px solid #00ffcc; margin: 15px 0;">
-                        <div style="color: #00ffcc; margin-bottom:5px;">STATS UPGRADE:</div>
-                        <div>Max HP: <span style="color:#00ffcc">400</span> (was 100)</div>
-                        <div>Damage: <span style="color:#00ffcc">15</span> (was 5)</div>
-                        <div>Speed: <span style="color:#ff5555">200</span> (was 250)</div>
-                    </div>
-                    <button id="btn-buy-ship-5" style="background: rgba(0, 255, 204, 0.2); border: 2px solid #00ffcc; color: white; padding: 10px 20px; cursor:pointer; font-weight:bold;">UPGRADE SHIP</button>
-                </div>
-            </div>
-        </div>
-        
     </div>
-    <script type="module" src="/src/game.js"></script>
+
+    <!-- ── Minimap ── -->
+    <div id="minimap">
+        <div class="minimap-bg"></div>
+        <div id="minimap-cube3d" class="minimap-cube3d"></div>
+        <button id="minimap-size-toggle" title="Ampliar mapa" aria-label="Ampliar mapa">+</button>
+        <div class="minimap-label">TAC</div>
+        <div class="minimap-cardinal n">N</div>
+        <div class="minimap-cardinal e">E</div>
+        <div class="minimap-cardinal s">S</div>
+        <div class="minimap-cardinal w">O</div>
+        <div class="minimap-tick n"></div>
+        <div class="minimap-tick e"></div>
+        <div class="minimap-tick s"></div>
+        <div class="minimap-tick w"></div>
+        <div id="minimap-waypoint"></div>
+        <div id="minimap-allies"></div>
+        <div id="minimap-player"></div>
+        <div id="minimap-enemies"></div>
+        <div id="minimap-legend" class="minimap-legend" title="Leyenda del mapa táctico">
+            <span class="ml-item ml-you">▲ Tú</span>
+            <span class="ml-item ml-e1">● E1</span>
+            <span class="ml-item ml-e2">● E2</span>
+            <span class="ml-item ml-e3">● E3</span>
+            <span class="ml-item ml-cmd">★ Cmd</span>
+            <span class="ml-item ml-base">■ Base</span>
+        </div>
+        <div id="minimap-orbital-legend" class="minimap-orbital-legend">
+            <span class="mol-axis mol-x">X</span>
+            <span class="mol-axis mol-y">Y↑</span>
+            <span class="mol-axis mol-z">Z</span>
+            <span class="mol-planet">● Home</span>
+            <span class="mol-twin">● Gemelo</span>
+            <span class="mol-you">▲ Tu rumbo</span>
+            <span class="mol-click">Tab = gemelo</span>
+            <span id="minimap-orbital-dist" class="mol-dist">— km</span>
+        </div>
+    </div>
+
+    <!-- ── FPS Counter ── -->
+    <div id="fps-counter" style="display:none;">
+        <span class="fps-dot"></span>
+        <span id="fps-value">0</span><span class="fps-unit">fps</span>
+    </div>
+
+    <div id="world-nav-hud">
+        <span id="nav-heading">Rumbo N 000°</span>
+        <span id="nav-target">Clic en mapa para mover · Clic en enemigo para apuntar</span>
+    </div>
+
+    <!-- ── Screen Pulse (upgrade / streak / error feedback) ── -->
+    <div id="screen-pulse" class="screen-pulse"></div>
+
+    <!-- ── Credits HUD — click to open upgrades ── -->
+    <div id="credits-hud" onclick="toggleUpgrades()" title="Abrir mejoras [U]">
+        <span class="credits-icon">◈</span>
+        <span id="credits-value">0</span>
+        <span class="credits-unit">CR</span>
+        <span class="credits-hint">▲</span>
+        <div id="credit-popup" class="credit-popup" style="opacity:0;">+0cr</div>
+    </div>
+
+    <!-- ── Kill Streak Overlay ── -->
+    <div id="kill-streak" style="display:none;">
+        <div class="streak-inner">
+            <span id="streak-count">x1</span>
+            <span id="streak-label">RACHA DE BAJAS</span>
+        </div>
+    </div>
+
+    <div id="event-offer-toast" style="display:none;">Contrato de evento disponible</div>
+
+    <!-- ── Dynamic Event HUD ── -->
+    <div id="event-banner">ALERTA DE EVENTO</div>
+    <div id="world-event-panel" style="display:none;">
+        <div class="event-top-row">
+            <span id="event-title">INVASION</span>
+            <span id="event-timer">0s</span>
+        </div>
+        <div id="event-desc">Objetivo de evento</div>
+        <div class="event-progress-track">
+            <div id="event-progress-fill"></div>
+        </div>
+        <div class="event-bottom-row">
+            <span>BAJAS</span>
+            <span id="event-kills">0/0</span>
+        </div>
+    </div>
+
+    <!-- ── System Menu — top right ── -->
+    <div id="system-menu">
+        <button class="sys-btn sys-armory" title="Carga, mercado e inventario [I]" onclick="toggleArmory()">
+            <span class="sys-icon">LD</span><span class="sys-label">Carga</span><span class="sys-key">I</span>
+        </button>
+        <button class="sys-btn" title="Tablero de misiones [J]" onclick="toggleMissionBoard()">
+            <span class="sys-icon">MS</span><span class="sys-label">Misiones</span><span class="sys-key">J</span>
+        </button>
+        <button class="sys-btn sys-events" title="Eventos del mundo [E]" onclick="toggleEventBoard()">
+            <span class="sys-icon">EV</span><span class="sys-label">Eventos</span><span class="sys-key">E</span>
+            <span id="event-board-badge" class="sys-badge" style="display:none;">0</span>
+        </button>
+        <button class="sys-btn" title="Perfil de piloto [P]" onclick="toggleProfile()">
+            <span class="sys-icon">PL</span><span class="sys-label">Piloto</span><span class="sys-key">P</span>
+        </button>
+        <button class="sys-btn" title="Hangar de naves [H]" onclick="toggleHangar()">
+            <span class="sys-icon">HG</span><span class="sys-label">Hangar</span><span class="sys-key">H</span>
+        </button>
+        <button class="sys-btn sys-upgrades" title="Mejoras de nave [U]" onclick="toggleUpgrades()">
+            <span class="sys-icon">UP</span><span class="sys-label">Mejoras</span><span class="sys-key">U</span>
+        </button>
+        <button class="sys-btn sys-settings" title="Ajustes del juego [O]" onclick="toggleSettings()">
+            <span class="sys-icon">CF</span><span class="sys-label">Ajustes</span><span class="sys-key">O</span>
+        </button>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         SETTINGS PANEL
+    ══════════════════════════════════════ -->
+    <div id="settings-panel">
+        <div class="settings-header">
+            <span class="settings-title">⚙ AJUSTES</span>
+            <button class="settings-close" onclick="toggleSettings()">✕</button>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">INTERFAZ DEL JUEGO</div>
+            <div class="settings-row settings-row-stack">
+                <span class="settings-label">Modo de interfaz</span>
+                <div class="ui-mode-presets">
+                    <button type="button" class="ui-mode-btn active" data-ui-mode="auto"
+                        onclick="applyUiMode('auto', this)">Auto</button>
+                    <button type="button" class="ui-mode-btn" data-ui-mode="desktop"
+                        onclick="applyUiMode('desktop', this)">PC</button>
+                    <button type="button" class="ui-mode-btn" data-ui-mode="mobile"
+                        onclick="applyUiMode('mobile', this)">Movil</button>
+                </div>
+                <select id="ui-mode-select" hidden aria-hidden="true">
+                    <option value="auto">auto</option>
+                    <option value="desktop">desktop</option>
+                    <option value="mobile">mobile</option>
+                </select>
+                <p class="settings-hint">Auto detecta celular. PC muestra menu lateral, barra de acciones y ratón. Movil muestra joystick y botones tactiles.</p>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">CONTROLES DE CAMARA</div>
+            <div class="settings-row">
+                <span class="settings-label">Invertir eje horizontal</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-invert-x" onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Invertir eje vertical</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-invert-y" onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row settings-row-desktop">
+                <span class="settings-label">Sensibilidad PC</span>
+                <input type="range" id="camera-sensitivity" min="0.3" max="2.5" step="0.1" value="1"
+                    oninput="applySettings(); updateSliderLabel(this, 'camera-sensitivity-val')">
+                <span class="slider-value" id="camera-sensitivity-val">1.0</span>
+            </div>
+            <div class="settings-row settings-row-mobile">
+                <span class="settings-label">Sensibilidad tactil</span>
+                <input type="range" id="camera-mobile-sensitivity" min="0.3" max="2.5" step="0.1" value="1"
+                    oninput="applySettings(); updateSliderLabel(this, 'camera-mobile-sensitivity-val')">
+                <span class="slider-value" id="camera-mobile-sensitivity-val">1.0</span>
+            </div>
+            <p class="settings-hint">Clic derecho rota. <strong>C</strong> o rueda recentra al instante.</p>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">SEGUIMIENTO DE CAMARA</div>
+            <div class="settings-row">
+                <span class="settings-label">Detras de la nave al mover (WASD)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-chase-camera" checked onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Tambien con autopilot / clic mapa</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-chase-autopilot" onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Espera tras rotar manual (s)</span>
+                <input type="range" id="chase-camera-delay" min="0.5" max="5" step="0.5" value="2"
+                    oninput="applySettings(); updateSliderLabel(this, 'chase-camera-delay-val', (v) => v + 's')">
+                <span class="slider-value" id="chase-camera-delay-val">2s</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Suavidad del giro</span>
+                <input type="range" id="chase-camera-smooth" min="0.4" max="2" step="0.1" value="1"
+                    oninput="applySettings(); updateSliderLabel(this, 'chase-camera-smooth-val')">
+                <span class="slider-value" id="chase-camera-smooth-val">1.0</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Vista combate (orbita enemigo)</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-combat-camera" onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="settings-section settings-section-desktop-only">
+            <div class="settings-section-title">NAVEGACION</div>
+            <div class="settings-row">
+                <span class="settings-label">Clic para mover</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-click-move" checked onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Preview al apuntar</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-nav-preview" checked onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row settings-row-stack">
+                <span class="settings-label">Efecto de destino</span>
+                <select id="nav-marker-style" class="settings-select" onchange="applySettings()">
+                    <option value="ring">Anillo</option>
+                    <option value="pulse">Pulso</option>
+                    <option value="beacon">Baliza</option>
+                    <option value="minimal">Minimo</option>
+                    <option value="off">Desactivado</option>
+                </select>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Color marcador</span>
+                <input type="color" id="nav-marker-color" value="#a8bcc8" onchange="applySettings()">
+            </div>
+            <p class="settings-hint">Clic izquierdo en el terreno o en el minimapa. WASD cancela la ruta.</p>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">PANTALLA</div>
+            <div class="settings-row">
+                <span class="settings-label">Contador de FPS</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-fps" onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">GRAFICOS</div>
+            <div class="settings-row settings-row-stack">
+                <span class="settings-label">Calidad gráfica</span>
+                <select id="graphics-quality" class="settings-select" onchange="applySettings()">
+                    <option value="auto">Auto (recomendado)</option>
+                    <option value="low">Bajo — PCs flojos</option>
+                    <option value="medium">Medio</option>
+                    <option value="high">Alto</option>
+                </select>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Contador FPS</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-fps" onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <p class="settings-hint">Si va a ~10 FPS: Calidad <b>Bajo</b> y desactiva bloom.</p>
+            <div class="settings-row">
+                <span class="settings-label">Intensidad de bloom</span>
+                <input type="range" id="bloom-intensity" min="0" max="3" step="0.1" value="0.38"
+                    oninput="applySettings(); updateSliderLabel(this, 'bloom-intensity-val')">
+                <span class="slider-value" id="bloom-intensity-val">0.38</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Umbral de bloom</span>
+                <input type="range" id="bloom-threshold" min="0" max="1" step="0.05" value="0.9"
+                    oninput="applySettings(); updateSliderLabel(this, 'bloom-threshold-val')">
+                <span class="slider-value" id="bloom-threshold-val">0.90</span>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Densidad de niebla</span>
+                <input type="range" id="fog-density" min="0.00005" max="0.0005" step="0.00005" value="0.00008"
+                    oninput="applySettings(); updateSliderLabel(this, 'fog-density-val', true)">
+                <span class="slider-value" id="fog-density-val">media</span>
+            </div>
+        </div>
+
+        <div class="settings-section settings-section-desktop-only">
+            <div class="settings-section-title">DISENO HUD</div>
+            <div class="layout-presets">
+                <button class="preset-btn active" data-preset="classic" onclick="applyLayout('classic',this)">
+                    <div class="preset-preview classic-preview"></div>
+                    <span>Clasico</span>
+                </button>
+                <button class="preset-btn" data-preset="compact" onclick="applyLayout('compact',this)">
+                    <div class="preset-preview compact-preview"></div>
+                    <span>Compacto</span>
+                </button>
+                <button class="preset-btn" data-preset="cinematic" onclick="applyLayout('cinematic',this)">
+                    <div class="preset-preview cinematic-preview"></div>
+                    <span>Cinematico</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-title">INTERFAZ</div>
+            <div class="settings-row">
+                <span class="settings-label">Minimapa</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-minimap" checked onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Registro de combate</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-combatlog" checked onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Panel de mision</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-missionpanel" checked onchange="applySettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="settings-footer">
+            <button class="reset-btn" onclick="resetSettings()">↺ Restablecer por defecto</button>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         MODALS
+    ══════════════════════════════════════ -->
+    <div id="armory-modal" class="game-modal armory-modal" style="display:none;">
+        <div class="modal-header armory-header">
+            <div class="modal-title-row">
+                <span class="modal-icon armory-header-code">LD</span>
+                <div>
+                    <h2>Carga de nave</h2>
+                    <p class="armory-header-sub">Inventario · mercado · ensamble</p>
+                </div>
+            </div>
+            <div class="armory-wallet">
+                <span id="armory-credits">0</span>
+                <span class="armory-wallet-unit">CR</span>
+            </div>
+            <button class="modal-close" id="close-armory">✕</button>
+        </div>
+        <div class="armory-parts-bar">
+            <span class="armory-parts-label">Piezas de campo</span>
+            <div id="armory-parts-list" class="armory-parts-list"></div>
+        </div>
+        <div class="armory-body">
+            <aside class="armory-sidebar">
+                <div class="armory-sidebar-title">Equipado</div>
+                <div id="armory-loadout" class="armory-loadout"></div>
+            </aside>
+            <section class="armory-main">
+                <div class="armory-filters" id="armory-filters">
+                    <button type="button" class="armory-filter active" data-armory-filter="all">Todo</button>
+                    <button type="button" class="armory-filter" data-armory-filter="weapon">Armas</button>
+                    <button type="button" class="armory-filter" data-armory-filter="missile">Misiles</button>
+                    <button type="button" class="armory-filter" data-armory-filter="shield">Escudos</button>
+                    <button type="button" class="armory-filter" data-armory-filter="engine">Motores</button>
+                    <button type="button" class="armory-filter" data-armory-filter="hull">Cascos</button>
+                    <button type="button" class="armory-filter" data-armory-filter="craft">Ensamble</button>
+                </div>
+                <div id="armory-catalog" class="armory-catalog"></div>
+            </section>
+            <aside class="armory-detail-panel" id="armory-detail"></aside>
+        </div>
+    </div>
+
+    <!-- legacy: oculto, redirige a armory -->
+    <div id="inventory-modal" class="game-modal" style="display:none !important;" aria-hidden="true"></div>
+    <div id="shop-modal" class="game-modal" style="display:none !important;" aria-hidden="true"></div>
+
+    <div id="mission-board-modal" class="game-modal mission-board-modal" style="display:none;">
+        <div class="modal-header mission-header">
+            <div class="modal-title-row">
+                <span class="modal-icon mission-header-code">MS</span>
+                <div>
+                    <h2>Tablón de misiones</h2>
+                    <p class="mission-header-sub">Contratos del sector · Ares-V</p>
+                </div>
+            </div>
+            <span id="mb-sector-badge" class="mission-sector-badge">Sector 1</span>
+            <button class="modal-close" id="close-mission-board">✕</button>
+        </div>
+        <div class="mission-body">
+            <div class="mission-list" id="mission-list-container"></div>
+            <div class="mission-details">
+                <div class="mission-detail-head">
+                    <h3 id="mb-title">Selecciona una misión</h3>
+                    <span id="mb-state-badge" class="mission-state-badge">—</span>
+                </div>
+                <p id="mb-desc" class="mission-desc">Revisa los contratos disponibles.</p>
+                <div id="mb-meta" class="mission-meta"></div>
+                <div id="mb-rewards" class="mission-rewards"></div>
+                <div class="mission-progress-wrap" id="mb-progress-wrap" hidden>
+                    <div class="mission-progress-track">
+                        <div id="mb-progress-fill" class="mission-progress-fill"></div>
+                    </div>
+                    <span id="mb-progress-label" class="mission-progress-label">0/0</span>
+                </div>
+                <p id="mb-objective" class="mission-objective"></p>
+                <div class="mb-actions">
+                    <button type="button" id="mb-nav-btn" class="mb-nav-btn">Ir a zona</button>
+                    <button type="button" id="mb-accept-btn" class="mb-accept-btn">Aceptar misión</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="event-board-modal" class="game-modal" style="display:none;">
+        <div class="modal-header event-header">
+            <div class="modal-title-row">
+                <span class="modal-icon">⚠</span>
+                <h2>CENTRO DE EVENTOS</h2>
+            </div>
+            <button class="modal-close" id="close-event-board">✕</button>
+        </div>
+        <div class="inv-body">
+            <div class="inv-slots" id="event-list-container"></div>
+            <div class="inv-details">
+                <h3 id="eb-title" style="color:#ff8844; margin-top:0;">Contratos de sector</h3>
+                <p id="eb-desc">Los eventos no arrancan solos. Acepta un contrato para activarlo.</p>
+                <p id="eb-meta" style="color:#8899aa; font-size:12px;"></p>
+                <button id="eb-accept-btn" style="display:none; margin-top:20px; background:rgba(255,100,50,0.15); border:2px solid #ff6644; color:white; padding:10px 20px; cursor:pointer; font-weight:bold; border-radius:8px;">ACEPTAR CONTRATO</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="profile-modal" class="game-modal profile-modal" style="display:none;">
+        <div class="modal-header cyan-header">
+            <div class="modal-title-row">
+                <span class="modal-icon">◉</span>
+                <h2>PERFIL DE PILOTO</h2>
+            </div>
+            <button class="modal-close" id="close-profile">✕</button>
+        </div>
+        <div class="inv-body profile-body">
+            <div class="inv-details" style="width:100%;">
+                <p style="color:#8899aa; margin-top:0;">Identidad persistente en este dispositivo. Controla como se gestionan eventos y contratos.</p>
+                <label class="profile-field">
+                    <span>Indicativo</span>
+                    <input type="text" id="profile-callsign-input" maxlength="18" placeholder="Piloto">
+                </label>
+                <label class="profile-field">
+                    <span>Rol de operacion</span>
+                    <select id="profile-role-select">
+                        <option value="operador">Operador (estandar)</option>
+                        <option value="comandante">Comandante (control ampliado)</option>
+                        <option value="dev">Desarrollo (atajos de prueba)</option>
+                    </select>
+                </label>
+                <label class="profile-field profile-check">
+                    <input type="checkbox" id="profile-radar-offers" checked>
+                    <span>Radar de contratos (avisa cuando hay evento listo — nunca auto-inicia)</span>
+                </label>
+                <p id="profile-stats-text" class="profile-stats">Eventos: 0 · Misiones: 0</p>
+                <button id="profile-save-btn" class="profile-save-btn">GUARDAR PERFIL</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="hangar-modal" class="game-modal" style="display:none;">
+        <div class="modal-header cyan-header">
+            <div class="modal-title-row">
+                <span class="modal-icon">⬡</span>
+                <h2>HANGAR DE NAVES</h2>
+            </div>
+            <button class="modal-close" id="close-hangar">✕</button>
+        </div>
+        <div class="inv-body hangar-body">
+            <div class="inv-slots" id="hangar-ship-list"></div>
+            <div class="inv-details hangar-details">
+                <div class="hangar-ship-preview" id="hangar-ship-preview">
+                    <canvas id="hangar-preview-canvas"></canvas>
+                    <span class="hangar-preview-label">Vista previa 3D</span>
+                </div>
+                <div id="hangar-ship-info" class="hangar-ship-info"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         UPGRADES MODAL
+    ══════════════════════════════════════ -->
+    <div id="upgrades-modal" class="game-modal upgrades-modal" style="display:none;">
+        <div class="modal-header upgrades-header">
+            <div class="modal-title-row">
+                <span class="modal-icon upgrades-header-icon">UPG</span>
+                <div>
+                    <h2>Mejoras de nave</h2>
+                    <p class="upgrades-subtitle">Sistemas permanentes · pago con créditos</p>
+                </div>
+            </div>
+            <div class="upgrades-wallet">
+                <span id="upgrades-credits">0</span>
+                <span class="upgrades-wallet-unit">CR</span>
+            </div>
+            <button class="modal-close" id="close-upgrades">✕</button>
+        </div>
+        <div class="upgrades-body" id="upgrades-grid">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         SHOP MODAL
+    ══════════════════════════════════════ -->
+    <!-- shop unificado en armory-modal -->
+
+    <!-- ══════════════════════════════════════
+         CRAFT / HANGAR MODAL
+    ══════════════════════════════════════ -->
+    <div id="craft-modal" class="game-modal shop-modal craft-modal" style="display:none;">
+        <div class="modal-header shop-header">
+            <div class="modal-title-row">
+                <span class="modal-icon" style="color:#7fe4ff;">⚙</span>
+                <h2 style="color:#7fe4ff;">HANGAR — ENSAMBLAJE</h2>
+            </div>
+            <div class="shop-wallet">
+                <span style="color:#7fe4ff;">◈</span>
+                <span id="craft-credits" style="color:#aaddff; font-size:16px; font-weight:700;">0</span>
+                <span style="color:#6a8899; font-size:11px;">CR</span>
+            </div>
+            <button class="modal-close" id="close-craft">✕</button>
+        </div>
+        <div class="craft-parts-bar">
+            <span class="craft-parts-label">PIEZAS:</span>
+            <div id="craft-parts-list" class="craft-parts-list"></div>
+        </div>
+        <p class="craft-hint">Planeta 1 — componentes hasta MK-4. Caza enemigos de zona y patrullas para piezas.</p>
+        <div class="shop-items-grid" id="craft-recipes-grid"></div>
+    </div>
+
+</div>
+
+<!-- ── Controles móviles (touch) ── -->
+<div id="mobile-controls" hidden aria-label="Controles táctiles">
+    <div id="mobile-joystick" class="mobile-joystick" aria-label="Mover nave">
+        <div class="mobile-joystick-ring"></div>
+        <div id="mobile-joystick-stick" class="mobile-joystick-stick"></div>
+    </div>
+    <div class="mobile-actions">
+        <button type="button" id="mob-btn-target" class="mob-btn mob-btn-secondary" aria-label="Buscar objetivo"><span class="mob-charge-ring" aria-hidden="true"></span>◎</button>
+        <button type="button" id="mob-btn-repair" class="mob-btn mob-btn-repair" aria-label="Reparar"><span class="mob-charge-ring" aria-hidden="true"></span>✚</button>
+        <button type="button" id="mob-btn-shield" class="mob-btn mob-btn-secondary" aria-label="Escudo"><span class="mob-charge-ring" aria-hidden="true"></span>⬡</button>
+        <button type="button" id="mob-btn-missile" class="mob-btn mob-btn-secondary" aria-label="Misil"><span class="mob-charge-ring" aria-hidden="true"></span>◈</button>
+        <button type="button" id="mob-btn-nitro" class="mob-btn mob-btn-nitro" aria-label="Turbo"><span class="mob-charge-ring" aria-hidden="true"></span>▲</button>
+        <button type="button" id="mob-btn-fire" class="mob-btn mob-btn-fire" aria-label="Disparar"><span class="mob-charge-ring" aria-hidden="true"></span>✦</button>
+    </div>
+    <button type="button" id="mob-btn-menu" class="mob-btn mob-btn-menu" aria-label="Menú">☰</button>
+    <div id="mobile-menu-sheet" class="mobile-menu-sheet" hidden>
+        <div class="mobile-menu-header">Menú</div>
+        <div class="mobile-menu-grid">
+            <button type="button" class="mob-menu-item" data-mob-action="missions">Misiones</button>
+            <button type="button" class="mob-menu-item" data-mob-action="events">Eventos</button>
+            <button type="button" class="mob-menu-item" data-mob-action="hangar">Hangar</button>
+            <button type="button" class="mob-menu-item" data-mob-action="armory">Carga</button>
+            <button type="button" class="mob-menu-item" data-mob-action="upgrades">Mejoras</button>
+            <button type="button" class="mob-menu-item" data-mob-action="profile">Piloto</button>
+            <button type="button" class="mob-menu-item" data-mob-action="settings">Ajustes</button>
+        </div>
+        <button type="button" id="mobile-menu-close" class="mob-menu-close">Cerrar</button>
+    </div>
+    <div id="mobile-rotate-hint" class="mobile-rotate-hint" hidden>Ajustando vista horizontal…</div>
+</div>
+
+<script type="module" src="/src/game.js"></script>
 </body>
 </html>

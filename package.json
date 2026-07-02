@@ -1,19 +1,25 @@
 {
-  "name": "jg",
+  "name": "warspace-galaxy",
   "version": "1.0.0",
   "description": "",
   "main": "main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "start": "electron ."
+    "build": "node scripts/audit-player-bindings.js && node scripts/audit-enemy-bindings.js && node scripts/audit-module-imports.js && node scripts/validate-patrol-waypoints.js && vite build",
+    "audit": "node scripts/audit-player-bindings.js && node scripts/audit-enemy-bindings.js && node scripts/audit-module-imports.js && node scripts/validate-patrol-waypoints.js",
+    "start": "node scripts/start-dev.js",
+    "mp-server": "node scripts/multiplayer-server.js",
+    "electron": "electron .",
+    "browser": "vite --host 0.0.0.0 --port 5174 --open",
+    "share": "node scripts/share-remote.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",

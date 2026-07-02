@@ -1,0 +1,81 @@
+{
+  "recipes": [
+    {
+      "id": "craft_w_mk2",
+      "slot": "weapon",
+      "level": 2,
+      "name": "Cañón Iónico MK-II",
+      "manufacturer": "Industrias Terran",
+      "description": "Cañón mejorado con núcleo térmico estabilizado.",
+      "parts": { "core_ionico": 2, "camara_disparo": 1, "aleacion_refuerzo": 1 },
+      "crCost": 380,
+      "schematic": null
+    },
+    {
+      "id": "craft_m_mk2",
+      "slot": "missile",
+      "level": 2,
+      "name": "Lanzador MK-II",
+      "manufacturer": "Vulcan Corp",
+      "description": "Ojiva con guía mejorada y mayor radio de detonación.",
+      "parts": { "guia_misil": 2, "celda_propulsion": 1 },
+      "crCost": 420,
+      "schematic": null
+    },
+    {
+      "id": "craft_e_mk2",
+      "slot": "engine",
+      "level": 2,
+      "name": "Propulsor Vector MK-II",
+      "manufacturer": "AeroSpace Dynamics",
+      "description": "Mayor empuje y eficiencia de nitro.",
+      "parts": { "rotor_impulsor": 2, "celda_propulsion": 2 },
+      "crCost": 350,
+      "schematic": null
+    },
+    {
+      "id": "craft_s_mk2",
+      "slot": "shield",
+      "level": 2,
+      "name": "Escudo Aegis MK-II",
+      "manufacturer": "Aegis Dynamics",
+      "description": "Campo más denso con mejor duración.",
+      "parts": { "placa_escudo": 2, "generador_campo": 1 },
+      "crCost": 450,
+      "schematic": null
+    },
+    {
+      "id": "craft_r_mk2",
+      "slot": "repair",
+      "level": 2,
+      "name": "Nanobot MK-II",
+      "manufacturer": "MedTech Orbital",
+      "description": "Reparación más rápida en combate.",
+      "parts": { "nanobot_kit": 2, "celula_reparadora": 1 },
+      "crCost": 320,
+      "schematic": null
+    },
+    {
+      "id": "craft_g_mk2",
+      "slot": "sight",
+      "level": 2,
+      "name": "Targeter MK-II",
+      "manufacturer": "Nadir Labs",
+      "description": "Lock más rápido y precisión de misil superior.",
+      "parts": { "lente_mira": 2, "sensor_lock": 1 },
+      "crCost": 400,
+      "schematic": null
+    },
+    {
+      "id": "craft_h_mk2",
+      "slot": "hull",
+      "level": 2,
+      "name": "Blindaje MK-II",
+      "manufacturer": "Industrias Terran",
+      "description": "Casco reforzado con aleación de campo.",
+      "parts": { "aleacion_refuerzo": 3, "placa_escudo": 1 },
+      "crCost": 300,
+      "schematic": null
+    }
+  ]
+}

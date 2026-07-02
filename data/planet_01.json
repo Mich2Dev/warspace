@@ -1,0 +1,154 @@
+{
+  "id": "planet_01",
+  "name": "Aegis Prime",
+  "maxComponentLevel": 4,
+  "hub": { "x": 0, "z": 4000, "label": "Base Aegis", "safeRadius": 2600 },
+  "regions": [
+    {
+      "id": "north_mantis",
+      "name": "Cordillera Mantis",
+      "center": { "x": -4200, "z": 9600 },
+      "radius": 3400,
+      "enemyType": "Zona1",
+      "hasSpawner": true,
+      "rolePool": ["patrol_mantis", "patrol_mantis", "ambush", "patrol_border"],
+      "patrolCount": 10,
+      "spawn": { "patrolMax": 4, "respawnMin": 50, "respawnMax": 85, "spawnerUnits": 15 },
+      "color": "#ff4444",
+      "description": "E1 — misiles y disparo normal."
+    },
+    {
+      "id": "northwest_mantis",
+      "name": "Filo Mantis",
+      "center": { "x": -9800, "z": 7200 },
+      "radius": 2900,
+      "enemyType": "Zona1",
+      "rolePool": ["patrol_mantis", "patrol_border", "ambush"],
+      "patrolCount": 8,
+      "color": "#ff5555",
+      "description": "Frontera Mantis — vigías del noroeste."
+    },
+    {
+      "id": "northeast_mantis",
+      "name": "Altiplano Mantis",
+      "center": { "x": 7800, "z": 8800 },
+      "radius": 2600,
+      "enemyType": "Zona1",
+      "rolePool": ["patrol_mantis", "patrol_border", "ambush"],
+      "patrolCount": 8,
+      "color": "#ff6666",
+      "description": "Mantis del noreste."
+    },
+    {
+      "id": "north_corridor",
+      "name": "Ruta Norte",
+      "center": { "x": 1200, "z": 8200 },
+      "radius": 2400,
+      "enemyType": "Zona1",
+      "rolePool": ["patrol_mantis", "ambush"],
+      "patrolCount": 6,
+      "color": "#ff7777",
+      "description": "Patrullas en el corredor norte."
+    },
+    {
+      "id": "east_scavenger",
+      "name": "Estepa Carroñera",
+      "center": { "x": 9800, "z": 600 },
+      "radius": 3600,
+      "enemyType": "Zona2",
+      "hasSpawner": true,
+      "rolePool": ["scavenger_roam", "scavenger_roam", "ambush"],
+      "patrolCount": 10,
+      "spawn": { "patrolMax": 4, "respawnMin": 55, "respawnMax": 90, "spawnerUnits": 15 },
+      "description": "E2 — carga dura y disparo normal."
+    },
+    {
+      "id": "southeast_scavenger",
+      "name": "Madriguera Carroñera",
+      "center": { "x": 9800, "z": -6800 },
+      "radius": 2800,
+      "enemyType": "Zona2",
+      "rolePool": ["scavenger_roam", "ambush"],
+      "patrolCount": 8,
+      "color": "#3399ee",
+      "description": "Carroñeros del sureste."
+    },
+    {
+      "id": "south_disruptor",
+      "name": "Cañón Disruptor",
+      "center": { "x": 4800, "z": -9800 },
+      "radius": 3300,
+      "enemyType": "Zona2",
+      "rolePool": ["disruptor", "scavenger_roam"],
+      "patrolCount": 6,
+      "color": "#ffaa44",
+      "description": "Disruptores — jam de misiles."
+    },
+    {
+      "id": "south_corridor",
+      "name": "Ruta Sur",
+      "center": { "x": -1200, "z": -7800 },
+      "radius": 2600,
+      "enemyType": "Zona2",
+      "rolePool": ["scavenger_roam", "disruptor"],
+      "patrolCount": 6,
+      "color": "#55bbff",
+      "description": "Carroñeros en el sur central."
+    },
+    {
+      "id": "west_command",
+      "name": "Fortaleza Comando",
+      "center": { "x": -9800, "z": -600 },
+      "radius": 3500,
+      "enemyType": "Zona3",
+      "hasSpawner": true,
+      "rolePool": ["heavy_escort", "heavy_escort", "heavy_escort"],
+      "patrolCount": 8,
+      "spawn": { "patrolMax": 4, "respawnMin": 60, "respawnMax": 95, "spawnerUnits": 15 },
+      "description": "E3 — escudo y disparo normal."
+    },
+    {
+      "id": "far_west_command",
+      "name": "Vanguardia Comando",
+      "center": { "x": -11200, "z": -4800 },
+      "radius": 2400,
+      "enemyType": "Zona3",
+      "rolePool": ["heavy_escort"],
+      "patrolCount": 6,
+      "color": "#9944dd",
+      "description": "Comandantes en el extremo oeste."
+    },
+    {
+      "id": "southwest_command",
+      "name": "Bastión del Sur",
+      "center": { "x": -6200, "z": -10800 },
+      "radius": 2800,
+      "enemyType": "Zona3",
+      "rolePool": ["heavy_escort", "heavy_escort"],
+      "patrolCount": 6,
+      "color": "#8844cc",
+      "description": "Comandantes del suroeste — lejos de la fortaleza."
+    },
+    {
+      "id": "mid_west_corridor",
+      "name": "Pasaje Oeste",
+      "center": { "x": -5200, "z": 1200 },
+      "radius": 2200,
+      "enemyType": "Zona2",
+      "rolePool": ["scavenger_roam"],
+      "patrolCount": 3,
+      "color": "#4488cc",
+      "description": "Carroñeros en el pasaje central-oeste."
+    }
+  ],
+  "patrols": [],
+  "corridors": [
+    { "from": "hub", "to": "north_mantis", "width": 900, "danger": 1 },
+    { "from": "hub", "to": "east_scavenger", "width": 900, "danger": 2 },
+    { "from": "hub", "to": "west_command", "width": 700, "danger": 3 },
+    { "from": "hub", "to": "south_disruptor", "width": 800, "danger": 2 },
+    { "from": "hub", "to": "north_corridor", "width": 750, "danger": 1 },
+    { "from": "hub", "to": "south_corridor", "width": 750, "danger": 2 },
+    { "from": "hub", "to": "mid_west_corridor", "width": 700, "danger": 2 }
+  ]
+}
