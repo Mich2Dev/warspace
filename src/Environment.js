@@ -1940,6 +1940,7 @@ export class Environment {
 
         if (t > 0.25) {
             // Esconder chunks del terreno + cielo plano a partir de 25% de mezcla
+            this._planetSphereActive = true;
             this._forceSurfaceHidden();
         } else {
             if (this.skyDome) {
@@ -2442,6 +2443,16 @@ export class Environment {
         for (const mesh of this.loadedChunks.values()) {
             this._applyChunkVisibility(mesh);
         }
+        
+        // Nuclear fallback: ocultar cualquier mesh de terreno huérfano en la escena
+        if (this.scene) {
+            this.scene.traverse((obj) => {
+                if (obj.userData?.chunkCoord || obj.userData?.grassMesh || obj.userData?.rockMesh || obj.userData?.isTerrainChunk) {
+                    obj.visible = false;
+                }
+            });
+        }
+        
         this._hideFlatWorldLayers();
     }
 
@@ -2462,13 +2473,13 @@ export class Environment {
     update(playerPosition, playerVelocity, travelOpts = {}) {
         if (this._flightMode) return;
 
-        if (this._ascendPerfMode) {
+        if (this._planetSphereActive) {
+            this._forceSurfaceHidden();
             this._tickSkyFollow(playerPosition);
             return;
         }
 
-        if (this._planetSphereActive) {
-            this._forceSurfaceHidden();
+        if (this._ascendPerfMode) {
             this._tickSkyFollow(playerPosition);
             return;
         }
