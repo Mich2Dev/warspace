@@ -133,9 +133,9 @@ class Game {
         this.enemyGltfLoader.setDRACOLoader(dracoLoader);
 
         this.scene = new THREE.Scene();
-        // Cielo azul arriba; niebla azul-gris en distancia (separación cielo/tierra)
-        this.scene.background = new THREE.Color(0x5890b8);
-        this.scene.fog = new THREE.Fog(0xb8ccd8, 900, 10500);
+        // Fondo synthwave oscuro — la transición al espacio es suave desde este tono
+        this.scene.background = new THREE.Color(0x050210);
+        this.scene.fog = new THREE.Fog(0x0a0520, 900, 10500);
 
         this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.8, 26000);
 

@@ -74,8 +74,8 @@ export class Environment {
         this._skyTopDefault = 0x4a7ab5;
         this._skyMidDefault = 0x78a8d0;
         this._skyHorizonDefault = 0xe2ecf4;
-        this._surfaceFogColor = 0xb8ccd8;
-        this._surfaceBgColor = 0x5890b8;
+        this._surfaceFogColor = 0x0a0520;
+        this._surfaceBgColor = 0x050210;
 
         const skyGeo = new THREE.SphereGeometry(22000, 32, 16);
         const skyMat = new THREE.ShaderMaterial({
@@ -1925,11 +1925,11 @@ export class Environment {
         }
 
         if (scene) {
-            const skyBg = this._blendHorizon.setHex(0x6a98c8).lerp(
+            const skyBg = this._blendHorizon.setHex(0x050210).lerp(
                 this._blendZenith.setHex(0x050a14), t,
             );
             scene.background = skyBg;
-            scene.fog = new THREE.FogExp2(skyBg, 0.000003 + t * 0.000008);
+            scene.fog = t > 0.3 ? null : new THREE.FogExp2(skyBg, 0.000002 + t * 0.000005);
         }
     }
 
@@ -1964,10 +1964,10 @@ export class Environment {
         if (this._transitionVeil) this._transitionVeil.visible = false;
 
         if (scene) {
-            const day = new THREE.Color(0x6a98c8);
+            const day = new THREE.Color(0x050210);
             const space = new THREE.Color(0x03050c);
             scene.background = day.clone().lerp(space, t);
-            scene.fog = t > 0.65 ? null : new THREE.FogExp2(scene.background, 0.000004 * (1 - t));
+            scene.fog = t > 0.3 ? null : new THREE.FogExp2(scene.background, 0.000002 * (1 - t));
         }
     }
 

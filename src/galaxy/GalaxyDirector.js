@@ -38,13 +38,13 @@ export class GalaxyDirector {
         this._crossCooldown = 0;
 
         /** Transición suave mapa ↔ órbita (estilo NMS: atmósfera por altitud). */
-        this.ASCEND_PRE_HAZE_AGL = 1400;
+        this.ASCEND_PRE_HAZE_AGL = 1200;
         this.ASCEND_START_AGL = 2200;
         this.ASCEND_END_AGL = 4800;
         /** Debajo de esto: límite circular del mapa (minimapa). */
         this.MAP_FLIGHT_BOUNDARY_AGL = 900;
         /** Arriba de esto: cielo espacial + planeta real abajo. */
-        this.STRATOSPHERE_START_AGL = 4500;
+        this.STRATOSPHERE_START_AGL = 3000;
         this.SHELL_TRANSITION_SEC = 5.8;
         this._shellProgress = 0;
         this._shellRemapped = false;
@@ -57,7 +57,7 @@ export class GalaxyDirector {
         this._stratosphereBlend = 0;
         /** Histéresis — evita parpadeo al cruzar la estratosfera. */
         this._stratosphereViewActive = false;
-        this.STRATOSPHERE_EXIT_AGL = 3200;
+        this.STRATOSPHERE_EXIT_AGL = 2200;
         /** 0 = solo mapa, 1 = solo esfera — nunca ambos a la vez. */
         this._planetHandoff = 0;
         this._wasStratosphereViewActive = false;
@@ -548,22 +548,22 @@ export class GalaxyDirector {
         }
     }
 
-    /** Cielo espacial + planeta 3D — histéresis real (entra ~4.5 km, sale ~3.2 km). */
+    /** Cielo espacial + planeta 3D — transición suave (entra ~3 km, sale ~2.2 km). */
     _updateHighAtmospherePresentation(agl, player, delta) {
         const START = this.STRATOSPHERE_START_AGL;
         const EXIT = this.STRATOSPHERE_EXIT_AGL;
 
         if (agl >= START) {
             this._stratosphereViewActive = true;
-        } else if (agl < EXIT - 500) {
+        } else if (agl < EXIT - 400) {
             this._stratosphereViewActive = false;
         }
 
-        const enterFade = THREE.MathUtils.smoothstep(START - 700, START + 600, agl);
-        const exitFade = THREE.MathUtils.smoothstep(EXIT - 700, EXIT + 150, agl);
+        const enterFade = THREE.MathUtils.smoothstep(START - 500, START + 400, agl);
+        const exitFade = THREE.MathUtils.smoothstep(EXIT - 500, EXIT + 100, agl);
         let planetT = Math.min(enterFade, exitFade);
 
-        if (this._isOffWorldSpaceNav() && agl >= EXIT - 500) {
+        if (this._isOffWorldSpaceNav() && agl >= EXIT - 400) {
             planetT = Math.max(planetT, enterFade);
         }
 
@@ -581,7 +581,8 @@ export class GalaxyDirector {
         this.environment?.setPlanetSphereView?.(true);
         this.environment?.setSurfaceFade?.(0);
 
-        const skyT = THREE.MathUtils.smoothstep(this.STRATOSPHERE_START_AGL, 12000, agl);
+        // Transición de cielo más agresiva — el espacio aparece mucho antes
+        const skyT = THREE.MathUtils.smoothstep(START, 6000, agl);
         this._stratosphereBlend = skyT;
         const time = performance.now() * 0.001;
         const R = this._universe.getHomePlanet()?.getRadius?.() ?? 22000;
@@ -603,7 +604,7 @@ export class GalaxyDirector {
         this._stratosphereShell.setIntensity(skyT * planetT);
         this._stratosphereShell.update(player.position, agl, R, time);
 
-        const hazeFx = Math.max(0, (1 - planetT) * 0.22) + skyT * 0.1;
+        const hazeFx = Math.max(0, (1 - planetT) * 0.15) + skyT * 0.06;
         this._atmosphereFX.setIntensity(hazeFx);
         this._atmosphereFX.update(this.camera, delta);
 
@@ -611,8 +612,10 @@ export class GalaxyDirector {
         this._orbitalDebris.update(this.camera, delta);
 
         if (this.scene) {
-            this.scene.fog = planetT > 0.75 ? null : new THREE.FogExp2(0x0a1428, 0.000003 * (1 - planetT));
-            const bg = new THREE.Color(0x6a98c8).lerp(new THREE.Color(0x03050c), skyT * planetT);
+            // Matar la niebla inmediatamente cuando planetT sube — no esperar a 0.75
+            this.scene.fog = planetT > 0.3 ? null : new THREE.FogExp2(0x0a1428, 0.000002 * (1 - planetT));
+            // Transición de fondo: synthwave oscuro → negro espacial puro
+            const bg = new THREE.Color(0x050210).lerp(new THREE.Color(0x010108), skyT * planetT);
             this.scene.background = bg;
         }
     }
@@ -997,13 +1000,13 @@ export class GalaxyDirector {
     _updateUniverseFlight(delta, player, controls, pointerLock) {
         this.phase = 'orbit';
         this._runFlightPhysics(delta, player, controls, pointerLock, {
-            speed: 1100,
-            nitroSpeed: 2600,
+            speed: 4500,
+            nitroSpeed: 12000,
             camDist: 520,
             camLift: 105,
             camPosSmooth: 5.5,
             camRotSmooth: 5,
-            drift: 0.992,
+            drift: 0.995,
         });
     }
 
