@@ -366,10 +366,6 @@ export class Environment {
         this.crystalGeo = crystalGeo;
         this.crystalMat = crystalMat;
 
-
-
-
-
         // Shader para convertir el terreno en agua hiperrealista sin mallas superpuestas
         this.terrainMat.onBeforeCompile = (shader) => {
             shader.uniforms.time = { value: 0 };
@@ -756,6 +752,11 @@ export class Environment {
             );
             this.terrainMat.userData.shader = shader;
         };
+
+        this._applyHorizonCurve(this.terrainMat);
+        this._applyHorizonCurve(this.rockMat);
+        this._applyHorizonCurve(this.pebbleMat);
+        this._applyHorizonCurve(this.crystalMat);
         
         // La malla del agua plana causaba "clipping" (bordes dentados aserrados) al chocar con
         // el terreno low-poly. La eliminamos por completo.
@@ -772,6 +773,32 @@ export class Environment {
 
         // Minimapa en segundo plano (evita ~440k getHeightAt síncronos al arrancar)
         this.scheduleMinimapBake();
+    }
+
+    _applyHorizonCurve(material) {
+        const originalCompile = material.onBeforeCompile.bind(material);
+        material.onBeforeCompile = (shader, renderer) => {
+            if (originalCompile) originalCompile(shader, renderer);
+            
+            if (!shader.vertexShader.includes('uniform float planetCurve;')) {
+                shader.uniforms.planetCurve = { value: 1.0 / (2.0 * 22000.0) };
+                
+                shader.vertexShader = `
+                    uniform float planetCurve;
+                ` + shader.vertexShader;
+                
+                shader.vertexShader = shader.vertexShader.replace(
+                    `#include <begin_vertex>`,
+                    `
+                    #include <begin_vertex>
+                    vec4 _curveWorldPos = modelMatrix * vec4(position, 1.0);
+                    float _curveDistXZ = length(_curveWorldPos.xz - cameraPosition.xz);
+                    float _drop = (_curveDistXZ * _curveDistXZ) * planetCurve;
+                    transformed.y -= _drop;
+                    `
+                );
+            }
+        };
     }
 
     setSessionActive(active) {
@@ -1079,6 +1106,7 @@ export class Environment {
             const mossGeo = new THREE.PlaneGeometry(8, 8, 1, 1);
             mossGeo.rotateX(-Math.PI / 2);
             const mossMat = new THREE.MeshLambertMaterial({ color: 0x1f3c0f, side: THREE.DoubleSide });
+            this._applyHorizonCurve(mossMat);
             const mossInstanced = new THREE.InstancedMesh(mossGeo, mossMat, job.mossPositions.length);
             const dummyMoss = new THREE.Object3D();
             const rnd = job.rng;
@@ -1240,6 +1268,7 @@ export class Environment {
 
             this._grassMat.userData.shader = shader;
         };
+        this._applyHorizonCurve(this._grassMat);
     }
 
     _initHorizonTerrain() {
@@ -1291,6 +1320,7 @@ export class Environment {
             depthWrite: false,
             depthTest: true,
         }));
+        this._applyHorizonCurve(this.horizonMesh.material);
         this.horizonMesh.frustumCulled = false;
         this.horizonMesh.renderOrder = -50;
         this.horizonMesh.visible = false;
@@ -1628,11 +1658,10 @@ export class Environment {
             reedGeo.translate(0, 6, 0); // pivote en la base
 
             const reedMat = new THREE.MeshLambertMaterial({
-                color: 0x2f6e4f,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.9
+                color: 0x4a6a58,
+                side: THREE.DoubleSide
             });
+            this._applyHorizonCurve(reedMat);
 
             const reeds = new THREE.InstancedMesh(reedGeo, reedMat, waterPlantPositions.length);
             const dummyReed = new THREE.Object3D();
