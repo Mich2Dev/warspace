@@ -1938,8 +1938,9 @@ export class Environment {
         const t = THREE.MathUtils.clamp(blend, 0, 1);
         if (t < 0.02) return;
 
-        if (t > 0.35) {
-            this._hideFlatWorldLayers();
+        if (t > 0.25) {
+            // Esconder chunks del terreno + cielo plano a partir de 25% de mezcla
+            this._forceSurfaceHidden();
         } else {
             if (this.skyDome) {
                 this.skyDome.visible = true;
@@ -1951,23 +1952,23 @@ export class Environment {
                     );
                 }
             }
-            if (this.haze) this.haze.visible = t < 0.35;
-            if (this.dustParticles) this.dustParticles.visible = t < 0.25;
+            if (this.haze) this.haze.visible = t < 0.2;
+            if (this.dustParticles) this.dustParticles.visible = t < 0.15;
         }
         if (this.horizonMesh) this.horizonMesh.visible = false;
         if (this.starsMesh) {
-            this.starsMesh.visible = t > 0.25 && t < 0.85;
+            this.starsMesh.visible = t > 0.15 && t < 0.85;
             if (this.starsMesh.material) {
-                this.starsMesh.material.opacity = THREE.MathUtils.smoothstep(0.25, 0.7, t) * 0.75;
+                this.starsMesh.material.opacity = THREE.MathUtils.smoothstep(0.15, 0.55, t) * 0.85;
             }
         }
         if (this._transitionVeil) this._transitionVeil.visible = false;
 
         if (scene) {
             const day = new THREE.Color(0x050210);
-            const space = new THREE.Color(0x03050c);
+            const space = new THREE.Color(0x010108);
             scene.background = day.clone().lerp(space, t);
-            scene.fog = t > 0.3 ? null : new THREE.FogExp2(scene.background, 0.000002 * (1 - t));
+            scene.fog = t > 0.15 ? null : new THREE.FogExp2(scene.background, 0.000001 * (1 - t));
         }
     }
 
