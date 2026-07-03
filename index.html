@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>nms_clone</title>
   </head>
   <body>
@@ -37,5 +37,12 @@
     <div id="screen-alert">¡DESTINO FIJADO!</div>
     
     <script type="module" src="/src/main.js"></script>
+    
+    <!-- Surface Minimap Border -->
+    <div id="minimap-border" style="display:none; position:absolute; top:20px; right:20px; width:250px; height:250px; border:2px solid #00ffff; background: rgba(0,20,40,0.5); pointer-events: none; z-index: 10;">
+      <div style="position:absolute; top:-25px; left:0; color:#00ffff; font-family:monospace; font-weight:bold;">RADAR DE SUPERFICIE</div>
+      <!-- Center crosshair -->
+      <div style="position:absolute; top:50%; left:50%; width:10px; height:10px; border:1px solid #ff0000; transform:translate(-50%,-50%); border-radius:50%;"></div>
+    </div>
   </body>
 </html>

@@ -4,10 +4,12 @@ body {
   background-color: #000;
   color: white;
   font-family: sans-serif;
+  touch-action: none;
+  overscroll-behavior: none;
 }
 #app {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
 }
 .ui {
   position: absolute;
@@ -18,6 +20,96 @@ body {
   padding: 10px 20px;
   border-radius: 8px;
   border: 1px solid #333;
+}
+
+/* =========================================
+   Mobile UI (Fase 4)
+========================================= */
+#mobile-ui {
+  display: none;
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+body.mobile-mode #mobile-ui {
+  display: block;
+}
+
+/* Hide desktop instructions on mobile */
+body.mobile-mode .ui {
+  display: none;
+}
+
+/* Force Landscape Warning (Optional but good UX) */
+@media screen and (orientation: portrait) {
+  body.mobile-mode::before {
+    content: "Gira el teléfono (Horizontal) para jugar";
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: black; color: white;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+    font-size: 20px; font-weight: bold; text-align: center;
+    padding: 20px;
+  }
+}
+
+.joystick {
+  position: absolute;
+  bottom: 20px;
+  width: 100px; height: 100px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none; /* Prevent browser handling */
+}
+
+#joy-left { left: max(20px, env(safe-area-inset-left)); }
+#joy-right { right: max(20px, env(safe-area-inset-right)); }
+
+.joystick .knob {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 40px; height: 40px;
+  margin-top: -20px; margin-left: -20px;
+  background: rgba(0, 255, 255, 0.3);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.m-buttons {
+  position: absolute;
+  top: max(15px, env(safe-area-inset-top));
+  right: max(15px, env(safe-area-inset-right));
+  display: flex; gap: 8px;
+  pointer-events: auto;
+}
+
+.m-btn {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  color: rgba(0, 255, 255, 0.7);
+  padding: 8px 12px;
+  border-radius: 20px;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: bold;
+  user-select: none;
+  touch-action: none;
+}
+.m-btn:active {
+  background: rgba(0, 255, 255, 0.2);
+}
+
+.boost-btn {
+  border-color: rgba(255, 165, 0, 0.4);
+  color: rgba(255, 165, 0, 0.8);
+}
+.boost-btn:active {
+  background: rgba(255, 165, 0, 0.2);
 }
 
 #nav-marker {

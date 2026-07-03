@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 import { createNoise3D } from 'simplex-noise';
 
-const noise3D = createNoise3D();
+// PRNG Determinista (Mulberry32) para que el terreno sea idéntico en todos los clientes
+function mulberry32(a) {
+    return function() {
+      let t = a += 0x6D2B79F5;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+const noise3D = createNoise3D(mulberry32(123456789)); // Semilla global fija
 const RESOLUTION = 16; // Number of segments per quad chunk
 
 export class TerrainBuilder {
@@ -40,8 +49,8 @@ export class TerrainBuilder {
     // Assign a basic material
     const material = new THREE.MeshStandardMaterial({ 
       color: color,
-      wireframe: true, // Use wireframe initially to easily see Quadtree subdivisions
-      roughness: 0.8
+      roughness: 0.8,
+      metalness: 0.1
     });
     
     return new THREE.Mesh(geometry, material);
