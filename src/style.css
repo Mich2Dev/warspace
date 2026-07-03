@@ -1,0 +1,77 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: #000;
+  color: white;
+  font-family: sans-serif;
+}
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+.ui {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid #333;
+}
+
+#nav-marker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: none; /* hidden by default */
+  color: #ffea00; /* Cyberpunk Yellow */
+  font-family: 'Courier New', Courier, monospace;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-shadow: 0 0 5px rgba(255, 234, 0, 0.8);
+}
+
+.bracket {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.marker-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.marker-title {
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 2px;
+}
+
+#nav-distance {
+  font-size: 10px;
+}
+
+#screen-alert {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 32px;
+  font-weight: bold;
+  color: #ffea00;
+  text-shadow: 0 0 10px rgba(255, 234, 0, 1);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 10px 30px;
+  border: 2px solid #ffea00;
+  border-radius: 5px;
+}

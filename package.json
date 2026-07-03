@@ -1,29 +1,18 @@
 {
-  "name": "warspace-galaxy",
-  "version": "1.0.0",
-  "description": "",
-  "main": "main.js",
+  "name": "nms_clone",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/audit-player-bindings.js && node scripts/audit-enemy-bindings.js && node scripts/audit-module-imports.js && node scripts/validate-patrol-waypoints.js && vite build",
-    "audit": "node scripts/audit-player-bindings.js && node scripts/audit-enemy-bindings.js && node scripts/audit-module-imports.js && node scripts/validate-patrol-waypoints.js",
-    "start": "node scripts/start-dev.js",
-    "mp-server": "node scripts/multiplayer-server.js",
-    "electron": "electron .",
-    "browser": "vite --host 0.0.0.0 --port 5174 --open",
-    "share": "node scripts/share-remote.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "three": "^0.184.0",
-    "ws": "^8.21.0"
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "devDependencies": {
-    "cross-env": "^10.1.0",
-    "electron": "^42.4.1",
-    "vite": "^8.1.0"
+    "vite": "^8.1.1"
+  },
+  "dependencies": {
+    "simplex-noise": "^4.0.3",
+    "three": "^0.185.1"
   }
 }
