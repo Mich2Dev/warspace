@@ -95,6 +95,14 @@ export class Spaceship {
     this.mode = 'FLIGHT'; // 'FLIGHT' or 'HOVER'
     this.hoverPlanet = null; // Planet data for anchoring
     this.hoverHeightOffset = 5; // Distance to hover above terrain
+    
+    // Autopilot
+    this.autoTarget = null; // { type: 'planet'|'player', obj: Ref }
+    this.autopilotEngaged = false;
+    
+    // Combat
+    this.hp = 100;
+    this.isDead = false;
   }
 
   onMouseMove(movementX, movementY) {
@@ -158,49 +166,105 @@ export class Spaceship {
     let targetFlameScale = 0.5; // Idle is visible
     let targetFlameColor = 0x0044ff;
     
-    // Thrust
-    if (keys['KeyW']) {
-      this.speed += this.acceleration * delta;
-      targetFlameScale = 1.2;
-      targetFlameColor = 0x00ffff;
-    } else if (keys['KeyS']) {
-      this.speed -= this.acceleration * delta;
-      targetFlameScale = 0.0;
+    // Disengage autopilot if user manually steers or throttles
+    if (this.autopilotEngaged && (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'])) {
+      this.autopilotEngaged = false;
+      const statusUI = document.getElementById('autopilot-status');
+      if (statusUI) {
+        statusUI.innerText = 'STANDBY';
+        statusUI.className = 'autopilot-status';
+      }
+    }
+    
+    if (this.autopilotEngaged && this.autoTarget) {
+      // Autopilot Logic
+      let targetPos = new THREE.Vector3();
+      let isPlayer = this.autoTarget.type === 'player';
+      
+      if (this.autoTarget.type === 'planet') {
+        targetPos.copy(this.autoTarget.obj.group.position);
+      } else if (isPlayer) {
+        // Apuntar al lado derecho de la nave amiga para volar en formación (offset de 50 unidades)
+        const rightOffset = new THREE.Vector3(1, 0, 0)
+          .applyQuaternion(this.autoTarget.obj.mesh.quaternion)
+          .multiplyScalar(50);
+        targetPos.copy(this.autoTarget.obj.mesh.position).add(rightOffset);
+      }
+      
+      const dist = this.mesh.position.distanceTo(targetPos);
+      
+      // Auto-throttle
+      if (dist > 5000) {
+        // Boost if far
+        this.speed += this.acceleration * 2 * delta;
+        targetFlameScale = 3.0;
+        targetFlameColor = 0xffaa00;
+      } else if (dist > 150) {
+        // Cruise
+        this.speed += this.acceleration * delta;
+        targetFlameScale = 1.2;
+        targetFlameColor = 0x00ffff;
+      } else {
+        // Brake hard when arriving to avoid overshoot
+        // Frame-independent lerp towards 0 speed
+        this.speed = THREE.MathUtils.lerp(this.speed, 0, delta * 3.0);
+        targetFlameScale = 0.2;
+      }
+      
+      // Auto-steer (Pure Pursuit)
+      const lookMatrix = new THREE.Matrix4();
+      lookMatrix.lookAt(this.mesh.position, targetPos, this.mesh.up);
+      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
+      
+      // Turn much faster when close to avoid death-spiral / orbiting
+      const turnRate = dist < 400 ? 8.0 : 2.5;
+      this.mesh.quaternion.slerp(targetQuat, turnRate * delta);
+      
+      // Reset accumulators so manual mouse doesn't jerk the ship upon disengage
+      this.yawAccumulator = 0;
+      this.pitchAccumulator = 0;
+      
     } else {
-      this.speed *= 0.98; // Drag
-    }
-    
-    // TURBO BOOST (Fixed to accept either shift key)
-    if (keys['ShiftLeft'] || keys['ShiftRight']) {
-      this.speed += this.acceleration * 4 * delta; // Even faster acceleration for boost
-      targetFlameScale = 3.0; // Massive flame
-      targetFlameColor = 0xffaa00; // Turns orange/red on boost!
-    }
-    // Sync point light
-    this.engineLight.color.setHex(targetFlameColor);
-    this.engineLight.intensity = targetFlameScale * 2;
-    
-    // Clamp speed
-    this.speed = Math.max(-this.maxSpeed * 0.2, Math.min(this.speed, this.maxSpeed * 2));
-    
-    // Apply accumulated mouse rotations
-    this.mesh.rotateY(this.yawAccumulator);
-    this.mesh.rotateX(this.pitchAccumulator);
-    
-    // Dampen mouse movement (friction) so it doesn't spin forever
-    this.yawAccumulator *= 0.5;
-    this.pitchAccumulator *= 0.5;
-    
-    // Roll (A / D)
-    if (keys['KeyA']) {
-      this.mesh.rotateZ(this.rotationSpeed * delta);
-    }
-    if (keys['KeyD']) {
-      this.mesh.rotateZ(-this.rotationSpeed * delta);
+      // Manual Thrust
+      if (keys['KeyW']) {
+        this.speed += this.acceleration * delta;
+        targetFlameScale = 1.2;
+        targetFlameColor = 0x00ffff;
+      } else if (keys['KeyS']) {
+        this.speed -= this.acceleration * delta;
+        targetFlameScale = 0.0;
+      } else {
+        this.speed *= 0.98; // Drag
+      }
+      
+      if (keys['ShiftLeft'] || keys['ShiftRight']) {
+        this.speed += this.acceleration * 2 * delta; // Boost!
+        targetFlameScale = 3.0; // Massive flame
+        targetFlameColor = 0xffaa00; // Turns orange/red on boost!
+      }
+      
+      // Apply accumulated mouse rotations
+      this.mesh.rotateY(this.yawAccumulator);
+      this.mesh.rotateX(this.pitchAccumulator);
+      
+      // Dampen mouse movement (friction) so it doesn't spin forever
+      this.yawAccumulator *= 0.5;
+      this.pitchAccumulator *= 0.5;
+      
+      // Roll (A / D)
+      if (keys['KeyA']) {
+        this.mesh.rotateZ(this.rotationSpeed * delta);
+      }
+      if (keys['KeyD']) {
+        this.mesh.rotateZ(-this.rotationSpeed * delta);
+      }
     }
 
     // Move forward
     this.mesh.translateZ(-this.speed * delta);
+    
+    // Clamp speed
+    this.speed = Math.max(-this.maxSpeed * 0.2, Math.min(this.speed, this.maxSpeed * 2));
     
     // Save for network telemetry
     this.flameScale = targetFlameScale;
@@ -334,5 +398,52 @@ export class Spaceship {
     // 2. Kill the speed or bounce back slightly
     // If you were going very fast forward, bounce back a bit
     this.speed = -this.speed * 0.5;
+  }
+
+  takeDamage(newHp) {
+    this.hp = newHp;
+    
+    // Update UI
+    const hpText = document.getElementById('health-text');
+    const hpFill = document.getElementById('health-fill');
+    if (hpText) hpText.innerText = `HP: ${Math.max(0, this.hp)}`;
+    if (hpFill) {
+      hpFill.style.width = `${Math.max(0, this.hp)}%`;
+      if (this.hp <= 30) {
+        hpFill.style.backgroundColor = 'red';
+      } else if (this.hp <= 60) {
+        hpFill.style.backgroundColor = 'orange';
+      } else {
+        hpFill.style.backgroundColor = '#00ff88';
+      }
+    }
+    
+    // Flash red overlay
+    const overlay = document.getElementById('damage-overlay');
+    if (overlay) {
+      overlay.style.opacity = '1';
+      setTimeout(() => overlay.style.opacity = '0', 100);
+    }
+  }
+
+  die() {
+    this.isDead = true;
+    this.speed = 0;
+    this.mesh.visible = false;
+    
+    const deathScreen = document.getElementById('death-screen');
+    if (deathScreen) deathScreen.style.display = 'block';
+  }
+
+  respawn() {
+    this.isDead = false;
+    this.hp = 100;
+    this.speed = 0;
+    this.mesh.visible = true;
+    this.mesh.position.set(0, 0, 0);
+    this.takeDamage(100); // Reset UI
+    
+    const deathScreen = document.getElementById('death-screen');
+    if (deathScreen) deathScreen.style.display = 'none';
   }
 }

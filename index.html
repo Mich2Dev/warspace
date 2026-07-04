@@ -21,16 +21,55 @@
         <li><strong>Numpad 5:</strong> Anclar a la Superficie (Modo Terrestre)</li>
         <li><strong>Numpad 8:</strong> Despegar (Modo Vuelo)</li>
       </ul>
+      <!-- Navigation Computer Panel -->
+      <div id="nav-computer" class="nav-panel">
+        <div class="nav-header">
+          <h2>NAV-COMPUTER</h2>
+          <span class="autopilot-status" id="autopilot-status">STANDBY</span>
+        </div>
+        <div class="nav-section">
+          <h3>PLANETAS</h3>
+          <ul id="nav-planets-list"></ul>
+        </div>
+        <div class="nav-section">
+          <h3>CONTACTOS RADAR</h3>
+          <ul id="nav-friends-list"></ul>
+        </div>
+        <button id="btn-engage-autopilot" class="btn-engage" disabled>ENGAGE AUTOPILOT</button>
+      </div>
+
+      <!-- Combat UI -->
+      <div id="crosshair"></div>
+      <div id="lock-on-ui"></div>
+      
+      <div id="health-container">
+        <div id="health-text">HP: 100</div>
+        <div id="health-bar"><div id="health-fill"></div></div>
+      </div>
+      
+      <div id="damage-overlay"></div>
+      <div id="death-screen">HAS SIDO DESTRUIDO<br><span>Reapareciendo en 3...</span></div>
     </div>
     
     <!-- HUD Navigation Marker -->
-    <div id="nav-marker">
+    <div id="nav-marker" style="display: none;">
       <div class="bracket">[</div>
       <div class="marker-content">
         <span class="marker-title">DESTINO</span>
-        <span id="nav-distance">0m</span>
+        <span class="nav-distance" id="nav-distance">0m</span>
       </div>
       <div class="bracket">]</div>
+    </div>
+    
+    <!-- Mobile HUD (Visible only on touch devices) -->
+    <div id="mobile-ui">
+      <!-- Top Right Actions -->
+      <div class="m-buttons">
+        <div id="btn-map" class="m-btn">🗺️ Mapa</div>
+        <div id="btn-anchor" class="m-btn">⚓ Superficie</div>
+        <div id="btn-fire" class="m-btn fire-btn">🔥 FIRE</div>
+        <div id="btn-boost" class="m-btn boost-btn">🚀 TURBO</div>
+      </div>
     </div>
     
     <!-- Big Screen Alert -->

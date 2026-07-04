@@ -25,7 +25,9 @@ io.on('connection', (socket) => {
     id: socket.id,
     position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0, z: 0, w: 1 },
-    flameScale: 0
+    flameScale: 0,
+    hp: 100,
+    isDead: false
   };
   
   // Le avisamos a los demás que alguien nuevo llegó
@@ -33,12 +35,49 @@ io.on('connection', (socket) => {
   
   // Cuando el jugador se mueve o acelera, recibimos la actualización
   socket.on('player_moved', (data) => {
-    if (players[socket.id]) {
+    if (players[socket.id] && !players[socket.id].isDead) {
       players[socket.id].position = data.position;
       players[socket.id].rotation = data.rotation;
       players[socket.id].flameScale = data.flameScale;
       // Reenviamos la información a TODOS LOS DEMÁS jugadores
       socket.broadcast.emit('player_moved', players[socket.id]);
+    }
+  });
+
+  // Combat: Player Shoots
+  socket.on('player_shoot', (data) => {
+    if (players[socket.id] && !players[socket.id].isDead) {
+      // Reenviar el disparo a todos para que rendericen el láser
+      socket.broadcast.emit('player_shoot', {
+        id: socket.id,
+        position: data.position,
+        velocity: data.velocity
+      });
+    }
+  });
+
+  // Combat: Player Hits another
+  socket.on('player_hit', (targetId) => {
+    const target = players[targetId];
+    if (target && !target.isDead) {
+      target.hp -= 20; // 20 damage per laser hit
+      io.emit('player_health_changed', { id: targetId, hp: target.hp });
+
+      if (target.hp <= 0) {
+        target.isDead = true;
+        io.emit('player_died', targetId);
+
+        // Respawn timer (3 seconds)
+        setTimeout(() => {
+          if (players[targetId]) {
+            players[targetId].hp = 100;
+            players[targetId].isDead = false;
+            // Ponerlo en el centro
+            players[targetId].position = { x: 0, y: 0, z: 0 };
+            io.emit('player_respawned', players[targetId]);
+          }
+        }, 3000);
+      }
     }
   });
   

@@ -74,6 +74,7 @@ export class RemotePlayer {
       <div class="marker-content">
         <span class="marker-title">AMIGO</span>
         <span class="player-distance">0m</span>
+        <div class="enemy-health-bar"><div class="enemy-health-fill"></div></div>
       </div>
       <div class="bracket">]</div>
     `;
@@ -91,6 +92,24 @@ export class RemotePlayer {
     document.body.appendChild(this.marker);
     
     this.distLabel = this.marker.querySelector('.player-distance');
+    this.hpFill = this.marker.querySelector('.enemy-health-fill');
+    
+    // Combat State
+    this.hp = 100;
+    this.isDead = false;
+    
+    // Explosion Particles
+    this.explosionParticles = [];
+    for (let i = 0; i < 300; i++) {
+      const sprite = new THREE.Sprite(particleMat.clone());
+      sprite.visible = false;
+      this.mesh.add(sprite); // added to mesh so it explodes outward from local center
+      this.explosionParticles.push({
+        mesh: sprite,
+        velocity: new THREE.Vector3(),
+        life: 0
+      });
+    }
   }
   
   // Se llama cada vez que recibimos un paquete del servidor
@@ -152,16 +171,32 @@ export class RemotePlayer {
       }
     }
     
+    // Update Explosion Particles
+    for (const ep of this.explosionParticles) {
+      if (ep.life > 0) {
+        ep.life -= delta;
+        ep.mesh.position.addScaledVector(ep.velocity, delta);
+        ep.mesh.scale.setScalar(ep.life * 20); // Shrinks over time
+        ep.mesh.material.opacity = ep.life;
+        if (ep.life <= 0) ep.mesh.visible = false;
+      }
+    }
+    
     // Update HUD Marker position
     if (camera && localPosition) {
       const dist = this.mesh.position.distanceTo(localPosition);
       this.distLabel.innerText = Math.round(dist) + 'm';
       
       const screenPos = this.mesh.position.clone();
+      
+      const toTarget = new THREE.Vector3().subVectors(screenPos, camera.position).normalize();
+      const cameraForward = new THREE.Vector3();
+      camera.getWorldDirection(cameraForward);
+      
       screenPos.project(camera);
       
-      // Check if it's behind the camera
-      if (screenPos.z < 1) {
+      // Check if it's in front of the camera using dot product
+      if (toTarget.dot(cameraForward) > 0) {
         this.marker.style.display = 'flex';
         const x = (screenPos.x *  0.5 + 0.5) * window.innerWidth;
         const y = (screenPos.y * -0.5 + 0.5) * window.innerHeight;
@@ -175,6 +210,62 @@ export class RemotePlayer {
     }
   }
   
+  takeDamage(newHp) {
+    this.hp = newHp;
+    if (this.hpFill) {
+      this.hpFill.style.width = `${Math.max(0, this.hp)}%`;
+      if (this.hp <= 30) this.hpFill.style.backgroundColor = 'red';
+      else if (this.hp <= 60) this.hpFill.style.backgroundColor = 'orange';
+      else this.hpFill.style.backgroundColor = '#00ff88';
+    }
+  }
+  
+  die() {
+    this.isDead = true;
+    this.targetFlameScale = 0;
+    
+    // Hide ship model
+    for(const child of this.mesh.children) {
+      if (child.isGroup || child.type === 'Scene') child.visible = false;
+    }
+    
+    // Trigger Explosion
+    for (const ep of this.explosionParticles) {
+      ep.mesh.position.set(0, 0, 0); // Start at ship center
+      ep.velocity.set(
+        (Math.random() - 0.5) * 500,
+        (Math.random() - 0.5) * 500,
+        (Math.random() - 0.5) * 500
+      );
+      ep.mesh.material.color.setHex(0xffaa00);
+      ep.life = 1.0 + Math.random(); // 1 to 2 seconds
+      ep.mesh.visible = true;
+    }
+    
+    if (this.marker) {
+      const title = this.marker.querySelector('.marker-title');
+      if(title) title.innerText = 'DESTRUIDO';
+    }
+  }
+  
+  respawn(position) {
+    this.isDead = false;
+    this.hp = 100;
+    this.takeDamage(100);
+    this.targetPosition.copy(position);
+    this.mesh.position.copy(position);
+    
+    // Show ship model
+    for(const child of this.mesh.children) {
+      if (child.isGroup || child.type === 'Scene') child.visible = true;
+    }
+    
+    if (this.marker) {
+      const title = this.marker.querySelector('.marker-title');
+      if(title) title.innerText = 'AMIGO';
+    }
+  }
+
   destroy(scene) {
     scene.remove(this.mesh);
     if (this.marker && this.marker.parentNode) {
