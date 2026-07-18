@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import { Quadtree } from './Quadtree.js';
+import { PlanetDecorator } from './PlanetDecorator.js';
+import { AsteroidRing } from './AsteroidRing.js';
 
 export class Planet {
-  constructor(scene, radius, position = new THREE.Vector3(0,0,0), color = 0x339944) {
+  constructor(scene, radius, position = new THREE.Vector3(0,0,0), color = 0x339944, biome = 'Terran', hasRings = false) {
     this.scene = scene;
     this.radius = radius;
     this.color = color;
+    this.biome = biome;
     
     this.group = new THREE.Group();
     this.group.position.copy(position);
@@ -22,8 +25,18 @@ export class Planet {
     ];
     
     this.quadtrees = faces.map(face => {
-      return new Quadtree(this.group, face.localUp, this.radius, this.color);
+      return new Quadtree(this.group, face.localUp, this.radius, this.color, this.biome);
     });
+    
+    // Add Global Permanent Decorators (No more LOD pop-in!)
+    this.decorations = PlanetDecorator.createGlobalDecorations(this.radius, this.biome);
+    this.group.add(this.decorations);
+    
+    // Add Asteroid Rings if specified
+    if (hasRings) {
+        this.rings = AsteroidRing.createRingSystem(this.radius);
+        this.group.add(this.rings);
+    }
 
     // Create Atmosphere
     const atmoGeometry = new THREE.SphereGeometry(this.radius * 1.05, 64, 64);

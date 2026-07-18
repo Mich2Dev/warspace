@@ -4,11 +4,12 @@ import { TerrainBuilder } from './TerrainBuilder.js';
 const MAX_DEPTH = 8; // Increased depth for AAA planetary detail
 
 export class Quadtree {
-  constructor(group, localUp, radius, color, depth = 0, center = new THREE.Vector2(0,0), size = 2) {
+  constructor(group, localUp, radius, color, biome = 'Terran', depth = 0, center = new THREE.Vector2(0,0), size = 2) {
     this.group = group;
     this.localUp = localUp;
     this.radius = radius;
     this.color = color;
+    this.biome = biome;
     this.depth = depth;
     this.center = center; // coordinates mapped from -1 to 1 based on original cube face
     this.size = size;
@@ -38,15 +39,15 @@ export class Quadtree {
   }
   
   buildMesh() {
-    this.mesh = TerrainBuilder.buildChunk(this.localUp, this.axisA, this.axisB, this.radius, this.center, this.size, this.color);
+    this.mesh = TerrainBuilder.buildChunk(this.localUp, this.axisA, this.axisB, this.radius, this.center, this.size, this.color, this.biome);
     this.group.add(this.mesh);
   }
   
   removeMesh() {
     if (this.mesh) {
-      this.group.remove(this.mesh);
       this.mesh.geometry.dispose();
       this.mesh.material.dispose();
+      this.group.remove(this.mesh);
       this.mesh = null;
     }
   }
@@ -80,18 +81,13 @@ export class Quadtree {
     const halfSize = this.size / 2;
     const quarterSize = this.size / 4;
     
-    // Create 4 children
-    const offsets = [
-      [-1, -1], [1, -1], [-1, 1], [1, 1]
-    ];
+    const childSize = this.size / 2;
+    const offset = this.size / 4;
     
-    for (const offset of offsets) {
-      const childCenter = new THREE.Vector2(
-        this.center.x + offset[0] * quarterSize,
-        this.center.y + offset[1] * quarterSize
-      );
-      this.children.push(new Quadtree(this.group, this.localUp, this.radius, this.color, this.depth + 1, childCenter, halfSize));
-    }
+    this.children.push(new Quadtree(this.group, this.localUp, this.radius, this.color, this.biome, this.depth + 1, new THREE.Vector2(this.center.x - offset, this.center.y - offset), childSize));
+    this.children.push(new Quadtree(this.group, this.localUp, this.radius, this.color, this.biome, this.depth + 1, new THREE.Vector2(this.center.x + offset, this.center.y - offset), childSize));
+    this.children.push(new Quadtree(this.group, this.localUp, this.radius, this.color, this.biome, this.depth + 1, new THREE.Vector2(this.center.x - offset, this.center.y + offset), childSize));
+    this.children.push(new Quadtree(this.group, this.localUp, this.radius, this.color, this.biome, this.depth + 1, new THREE.Vector2(this.center.x + offset, this.center.y + offset), childSize));
   }
 
   merge() {

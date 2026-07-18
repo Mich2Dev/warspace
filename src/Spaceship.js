@@ -12,6 +12,7 @@ export class Spaceship {
     // Start at Z = 15000 so we are well outside the first planet (Radius 10000)
     this.mesh.position.set(0, 0, 15000);
     this.scene.add(this.mesh);
+    this.headlightCooldown = 0;
 
     // Load custom GLB Model
     const loader = new GLTFLoader();
@@ -24,6 +25,35 @@ export class Spaceship {
       // model.rotation.y = Math.PI; // Adjust if the model is backwards
       this.mesh.add(model);
     });
+    
+    // Headlights (Spotlights for Night Navigation)
+    this.headlights = new THREE.Group();
+    
+    const createHeadlight = (xOffset) => {
+        const spotLight = new THREE.SpotLight(0xffffff, 5); // Intense white light
+        spotLight.position.set(xOffset, -1, 5); // slightly below and forward
+        spotLight.angle = Math.PI / 6; // 30 degrees cone
+        spotLight.penumbra = 0.5; // soft edges
+        spotLight.decay = 1.5; // Realistic falloff
+        spotLight.distance = 15000; // Far reach for massive planets
+        
+        // Target needs to be added to the scene or a parent, and pushed forward
+        const target = new THREE.Object3D();
+        target.position.set(xOffset, -5, 100);
+        this.mesh.add(target);
+        spotLight.target = target;
+        
+        return spotLight;
+    };
+    
+    this.leftHeadlight = createHeadlight(-3);
+    this.rightHeadlight = createHeadlight(3);
+    this.headlights.add(this.leftHeadlight);
+    this.headlights.add(this.rightHeadlight);
+    
+    // Start with headlights on
+    this.headlightsActive = true;
+    this.mesh.add(this.headlights);
     
     // Engine Thruster Flames (Real Volumetric Particle System)
     // 1. Procedural Glow Texture
@@ -93,6 +123,7 @@ export class Spaceship {
     this.yawAccumulator = 0;
     
     this.mode = 'FLIGHT'; // 'FLIGHT' or 'HOVER'
+    this.isLanded = false;
     this.hoverPlanet = null; // Planet data for anchoring
     this.hoverHeightOffset = 90; // Aumentado para evitar enterrarse ya que la nave es más grande
     this.canAutoAnchor = true; // Prevents re-anchoring immediately after takeoff
@@ -128,7 +159,19 @@ export class Spaceship {
     if (this.mode === 'FLIGHT') {
       this.updateFlight(delta, keys);
     } else if (this.mode === 'HOVER') {
-      this.updateHover(delta, keys);
+      if (!this.isLanded) {
+        this.updateHover(delta, keys);
+      } else {
+        this.updateLanded(delta, keys);
+      }
+    }
+    
+    // Toggle Headlights
+    if (this.headlightCooldown > 0) this.headlightCooldown -= delta;
+    if (keys['h'] && this.headlightCooldown <= 0) {
+        this.headlightsActive = !this.headlightsActive;
+        this.headlights.visible = this.headlightsActive;
+        this.headlightCooldown = 0.5; // Half second cooldown
     }
     
     // Update camera position to follow the boom
@@ -387,6 +430,59 @@ export class Spaceship {
     }
   }
 
+  toggleLanding() {
+    if (this.mode !== 'HOVER') return;
+    
+    // Solo permitir aterrizar si estamos cerca del suelo y lentos
+    if (this.isLanded) {
+        // Despegar
+        this.isLanded = false;
+        // El lerp de updateHover se encargará de subir la nave suavemente a la altitud de vuelo.
+        
+        const statusUI = document.getElementById('autopilot-status');
+        if (statusUI) {
+            statusUI.innerText = 'DESPEGANDO';
+            setTimeout(() => { if (!this.autopilotEngaged) statusUI.innerText = ''; }, 2000);
+        }
+    } else {
+        // Aterrizar
+        this.isLanded = true;
+        this.speed = 0; // Freno total
+        
+        const statusUI = document.getElementById('autopilot-status');
+        if (statusUI) {
+            statusUI.innerText = 'ATERRIZAJE CONFIRMADO';
+            statusUI.className = 'autopilot-status landing';
+        }
+    }
+  }
+
+  updateLanded(delta, keys) {
+    // Cuando está aterrizado, la nave está anclada al suelo.
+    
+    // Anclaje estricto al suelo
+    const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
+    const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
+    
+    let terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome);
+    
+    // Rest on the surface
+    const surfaceNormal = localDir.clone().applyQuaternion(this.hoverPlanet.group.quaternion).normalize();
+    const targetPos = this.hoverPlanet.group.position.clone().add(surfaceNormal.multiplyScalar(terrainHeight + 2.5)); 
+    
+    // Aterrizaje suave (lerp) en lugar de teletransporte instantáneo
+    this.mesh.position.lerp(targetPos, delta * 3.0);
+    
+    // Alineación estricta de la nave (Nariz apunta tangencialmente, arriba es la normal)
+    const upVector = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize();
+    const shipForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion);
+    const right = new THREE.Vector3().crossVectors(shipForward, upVector).normalize();
+    const correctedForward = new THREE.Vector3().crossVectors(upVector, right).normalize();
+    
+    const targetRotation = new THREE.Matrix4().lookAt(new THREE.Vector3(0,0,0), correctedForward, upVector);
+    this.mesh.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(targetRotation), 0.1);
+  }
+
   updateHover(delta, keys) {
     if (!this.hoverPlanet) return;
     
@@ -395,21 +491,20 @@ export class Spaceship {
     // Pull the mouse up to manually raise the nose and take off!
     if (this.pitchAccumulator > 0.03) {
       this.mode = 'FLIGHT';
+      this.isLanded = false;
       this.hoverPlanet = null;
       this.canAutoAnchor = false;
       
       // Manual flight takeoff (raising the nose with pointer)
-      this.speed = Math.max(this.speed, 1000); // Give enough speed to escape the gravity auto-anchor instantly
-      this.mesh.translateY(20); // Small bump to prevent scraping the floor instantly
-      this.pitchAccumulator = 0; // CRITICAL: Reset pitch so it doesn't trigger repeatedly
+      this.speed = Math.max(this.speed, 1000); 
+      this.pitchAccumulator = 0; 
       
-      // Remove the autopilot UI
       const statusUI = document.getElementById('autopilot-status');
       if (statusUI) {
         statusUI.innerText = 'STANDBY';
         statusUI.className = 'autopilot-status';
       }
-      return; // Exit updateHover to switch modes
+      return; 
     }
     
     // --- Anchor Ship to Rotating Planet ---
@@ -478,7 +573,7 @@ export class Spaceship {
     // Muestreo de altura procedural para el centro
     const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
     const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
-    const terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius);
+    const terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome);
     
     const targetDist = terrainHeight + this.hoverHeightOffset;
     const currentDist = this.mesh.position.distanceTo(this.hoverPlanet.group.position);
@@ -500,8 +595,8 @@ export class Spaceship {
       const pForward = this.mesh.position.clone().add(shipForwardVec.clone().multiplyScalar(offsetDist));
       const pRight = this.mesh.position.clone().add(shipRightVec.clone().multiplyScalar(offsetDist));
       
-      const hForward = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius);
-      const hRight = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pRight, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius);
+      const hForward = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius, this.hoverPlanet.biome);
+      const hRight = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pRight, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius, this.hoverPlanet.biome);
       
       const wCenter = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().multiplyScalar(terrainHeight));
       const wForward = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().multiplyScalar(hForward));

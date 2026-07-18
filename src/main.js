@@ -22,7 +22,8 @@ const defaultKeys = {
   boost: 'Space', // Change default to Space
   fire: 'Digit1', // Primary keyboard fire key
   map: 'KeyM',
-  surface: 'KeyN'
+  surface: 'KeyN',
+  land: 'KeyL'
 };
 
 window.GameConfig = JSON.parse(localStorage.getItem('jg_keyconfig')) || { keys: defaultKeys };
@@ -380,14 +381,14 @@ spaceship.mesh.lookAt(0, 0, 0);
 const planets = [];
 
 const solarSystemData = [
-  { name: "Mercurio", radius: 7600 * 25, distance: 15000000, color: 0x888888, speed: 0.0008, inclination: 7.00, desc: "Planeta rocoso. Es el más pequeño y cercano al Sol. Carece de atmósfera significativa y tiene temperaturas extremas." },
-  { name: "Venus", radius: 19000 * 25, distance: 22500000, color: 0xe3bb76, speed: 0.0006, inclination: 3.39, desc: "Planeta rocoso. Similar a la Tierra en tamaño, pero con una atmósfera extremadamente densa, tóxica y caliente." },
-  { name: "Tierra", radius: 20000 * 25, distance: 30000000, color: 0x2b82c9, speed: 0.0005, inclination: 0.00, desc: "Planeta rocoso. Nuestro hogar. El único planeta conocido con vida, agua en estado líquido y una atmósfera rica en oxígeno." },
-  { name: "Marte", radius: 10600 * 25, distance: 40000000, color: 0xc1440e, speed: 0.0004, inclination: 1.85, desc: "Planeta rocoso. El 'Planeta Rojo'. Tiene un clima desértico y frío, con evidencia de haber tenido agua en el pasado." },
-  { name: "Júpiter", radius: 223000 * 25, distance: 60000000, color: 0xd39c7e, speed: 0.0002, inclination: 1.30, desc: "Gigante gaseoso. El más masivo de todos. Compuesto de hidrógeno y helio, con tormentas inmensas como la Gran Mancha Roja." },
-  { name: "Saturno", radius: 188000 * 25, distance: 85000000, color: 0xead6b8, speed: 0.00015, inclination: 2.49, desc: "Gigante gaseoso. Reconocido instantáneamente por su espectacular y complejo sistema de anillos." },
-  { name: "Urano", radius: 80000 * 25, distance: 115000000, color: 0x4b70dd, speed: 0.0001, inclination: 0.77, desc: "Gigante helado. Rota prácticamente 'de lado' sobre su eje y tiene una atmósfera muy fría." },
-  { name: "Neptuno", radius: 77000 * 25, distance: 150000000, color: 0x274687, speed: 0.00008, inclination: 1.77, desc: "Gigante helado. El planeta más lejano, oscuro, frío y azotado por vientos supersónicos." }
+  { name: "Mercurio", radius: 7600 * 25, distance: 15000000, color: 0x888888, speed: 0.0008, inclination: 7.00, biome: 'Lava', desc: "Planeta rocoso. Es el más pequeño y cercano al Sol." },
+  { name: "Venus", radius: 19000 * 25, distance: 22500000, color: 0xe3bb76, speed: 0.0006, inclination: 3.39, biome: 'Toxic', desc: "Planeta rocoso. Atmósfera tóxica." },
+  { name: "Tierra", radius: 20000 * 25, distance: 30000000, color: 0x2b82c9, speed: 0.0005, inclination: 0.00, biome: 'Terran', moons: [{ name: "Luna", radius: 5500 * 25, dist: 1000000, speed: 0.005, color: 0x888888, biome: 'Desert' }], desc: "Planeta rocoso. Nuestro hogar." },
+  { name: "Marte", radius: 10600 * 25, distance: 40000000, color: 0xc1440e, speed: 0.0004, inclination: 1.85, biome: 'Desert', desc: "Planeta rocoso. El 'Planeta Rojo'." },
+  { name: "Júpiter", radius: 223000 * 25, distance: 60000000, color: 0xd39c7e, speed: 0.0002, inclination: 1.30, biome: 'GasGiant', moons: [{ name: "Europa", radius: 4800 * 25, dist: 1500000, speed: 0.008, color: 0xaaffff, biome: 'Ice' }], desc: "Gigante gaseoso." },
+  { name: "Saturno", radius: 188000 * 25, distance: 85000000, color: 0xead6b8, speed: 0.00015, inclination: 2.49, biome: 'GasGiant', hasRings: true, desc: "Gigante gaseoso. Sistema de anillos." },
+  { name: "Urano", radius: 80000 * 25, distance: 115000000, color: 0x4b70dd, speed: 0.0001, inclination: 0.77, biome: 'Ice', hasRings: true, desc: "Gigante helado." },
+  { name: "Neptuno", radius: 77000 * 25, distance: 150000000, color: 0x274687, speed: 0.00008, inclination: 1.77, biome: 'Ice', desc: "Gigante helado." }
 ];
 
 solarSystemData.forEach((data, index) => {
@@ -398,9 +399,9 @@ solarSystemData.forEach((data, index) => {
   const basePos = new THREE.Vector3(Math.cos(angle) * data.distance, 0, Math.sin(angle) * data.distance);
   // Apply orbital inclination (rotate around X axis)
   basePos.applyAxisAngle(new THREE.Vector3(1, 0, 0), data.inclination * Math.PI / 180);
-  
-  const p = new Planet(scene, data.radius, basePos, data.color);
+  const p = new Planet(scene, data.radius, basePos, data.color, data.biome, data.hasRings);
   p.name = data.name;
+  p.desc = data.desc;
   p.orbitRadius = data.distance;
   p.orbitAngleOffset = angle;
   p.orbitSpeed = data.speed;
@@ -422,6 +423,24 @@ solarSystemData.forEach((data, index) => {
   mapVisuals.add(orbitLine);
   
   planets.push(p);
+  
+  // Add Moons
+  if (data.moons) {
+      p.moonsList = [];
+      data.moons.forEach(m => {
+          const moonPos = basePos.clone().add(new THREE.Vector3(m.dist, 0, 0));
+          const moon = new Planet(scene, m.radius, moonPos, m.color, m.biome, false);
+          moon.name = m.name;
+          moon.orbitRadius = m.dist;
+          moon.orbitSpeed = m.speed; // Fixed: use orbitSpeed for consistency
+          moon.orbitalSpeed = m.speed; // Keep this just in case
+          moon.orbitAngleOffset = Math.random() * Math.PI * 2; // Random start angle
+          moon.inclination = 0; // Flat orbit relative to parent
+          moon.parentPlanet = p;
+          planets.push(moon);
+          p.moonsList.push(moon);
+      });
+  }
 });
 
 // PRNG Determinista para sincronización de Asteroides
@@ -485,6 +504,9 @@ window.addEventListener('keydown', (e) => {
   }
 
   keys[e.code] = true; 
+  if (e.code === window.GameConfig.keys.land && spaceship.mode === 'HOVER') {
+     spaceship.toggleLanding();
+  }
   if (e.code === window.GameConfig.keys.map) {
     isMapMode = !isMapMode;
     if (isMapMode) {
@@ -755,7 +777,8 @@ const actionLabels = {
   boost: 'Turbo',
   fire: 'Disparar Láser',
   map: 'Mapa Galáctico',
-  surface: 'Anclaje de Superficie'
+  surface: 'Anclaje de Superficie',
+  land: 'Aterrizar / Despegar'
 };
 
 function renderSettingsMenu() {
@@ -1051,10 +1074,21 @@ function animate() {
 
     // Instead of using delta which desyncs clients, use absolute universal time
     const currentAngle = p.orbitAngleOffset + (p.orbitSpeed * universalTime);
-    const incRad = p.inclination ? (p.inclination * Math.PI / 180) : 0;
-    p.group.position.x = Math.cos(currentAngle) * p.orbitRadius;
-    p.group.position.y = -Math.sin(currentAngle) * p.orbitRadius * Math.sin(incRad);
-    p.group.position.z = Math.sin(currentAngle) * p.orbitRadius * Math.cos(incRad);
+    const incRad = p.inclination * Math.PI / 180;
+    
+    if (p.parentPlanet) {
+        // This is a moon! Orbit its parent.
+        const parentPos = p.parentPlanet.group.position;
+        const moonAngle = time * p.orbitalSpeed;
+        p.group.position.x = parentPos.x + Math.cos(moonAngle) * p.orbitRadius;
+        p.group.position.y = parentPos.y;
+        p.group.position.z = parentPos.z + Math.sin(moonAngle) * p.orbitRadius;
+    } else {
+        // Orbit the sun
+        p.group.position.x = Math.cos(currentAngle) * p.orbitRadius;
+        p.group.position.y = -Math.sin(currentAngle) * p.orbitRadius * Math.sin(incRad);
+        p.group.position.z = Math.sin(currentAngle) * p.orbitRadius * Math.cos(incRad);
+    }
 
     // Rotación sobre su propio eje (Ciclo Día/Noche sincronizado)
     p.group.rotation.y = universalTime * 0.005;
@@ -1064,6 +1098,74 @@ function animate() {
     // Update hitbox position to match planet
     const hitbox = planetHitboxes.find(h => h.userData.planet === p);
     if (hitbox) hitbox.position.copy(p.group.position);
+    
+    // 2. Asteroid Ring Collisions
+    if (p.rings && p.rings.userData.collisionData) {
+        // Ensure matrices are updated after moving the planet
+        p.group.updateMatrixWorld(true);
+        
+        const shipWorldPos = new THREE.Vector3();
+        spaceship.mesh.getWorldPosition(shipWorldPos);
+        
+        const ringsInverseMatrix = new THREE.Matrix4().copy(p.rings.matrixWorld).invert();
+        const shipLocalPos = shipWorldPos.clone().applyMatrix4(ringsInverseMatrix);
+        
+        // Broadphase: Check if we are within the ring bounds
+        if (Math.abs(shipLocalPos.y) < p.radius * 0.15) { // Vertical bound
+             const shipDist2D = Math.sqrt(shipLocalPos.x*shipLocalPos.x + shipLocalPos.z*shipLocalPos.z);
+             if (shipDist2D > p.radius * 1.1 && shipDist2D < p.radius * 2.7) { // Radial bounds
+                  const collisionData = p.rings.userData.collisionData;
+                  for (let i = 0; i < collisionData.length; i++) {
+                       const ast = collisionData[i];
+                       const dx = shipLocalPos.x - ast.x;
+                       const dy = shipLocalPos.y - ast.y;
+                       const dz = shipLocalPos.z - ast.z;
+                       const distSq = dx*dx + dy*dy + dz*dz;
+                       
+                       const hitRadius = ast.radius + 20; // 20 units for spaceship size buffer
+                       
+                       if (distSq < hitRadius * hitRadius) {
+                            // COLLISION!
+                            const dist = Math.sqrt(distSq);
+                            // Vector pointing from asteroid center to ship
+                            const normal = new THREE.Vector3(dx, dy, dz).normalize();
+                            normal.transformDirection(p.rings.matrixWorld);
+                            
+                            // 1. Geometric Separation (Anti-Tunneling)
+                            // Push the ship outside the asteroid immediately so it doesn't get stuck
+                            const penetrationDepth = hitRadius - dist;
+                            spaceship.mesh.position.add(normal.clone().multiplyScalar(penetrationDepth + 10));
+                            
+                            // 2. Physics Bounce
+                            const impactForce = Math.abs(spaceship.speed) * 1.5 + 200;
+                            spaceship.velocity.copy(normal.clone().multiplyScalar(impactForce));
+                            spaceship.speed = -Math.abs(spaceship.speed) * 0.5; // Reverse and damp speed
+                            
+                            // 3. Visual Feedback (Zero Lag)
+                            // Instead of creating a new WebGL Light (which causes lag), we flash the screen red via DOM
+                            let flash = document.getElementById('damage-flash');
+                            if (!flash) {
+                                flash = document.createElement('div');
+                                flash.id = 'damage-flash';
+                                flash.style.position = 'absolute';
+                                flash.style.top = '0'; flash.style.left = '0';
+                                flash.style.width = '100%'; flash.style.height = '100%';
+                                flash.style.backgroundColor = 'rgba(255, 0, 0, 0.5)';
+                                flash.style.pointerEvents = 'none';
+                                flash.style.zIndex = '9999';
+                                flash.style.transition = 'opacity 0.5s ease-out';
+                                document.body.appendChild(flash);
+                            }
+                            flash.style.opacity = '1';
+                            setTimeout(() => { flash.style.opacity = '0'; }, 50);
+                            
+                            // Break out after first collision to prevent multiple hits in one frame
+                            break;
+                       }
+                  }
+             }
+        }
+    }
 
     // 2. Relative Physics: Inherit orbital velocity if inside gravity well or anchored!
     const distForDrag = spaceship.mesh.position.distanceTo(p.group.position);
@@ -1072,14 +1174,14 @@ function animate() {
       spaceship.camera.position.add(deltaPos); // Prevent camera lagging behind the moving ship
     }
 
-    // 3. Collision Detection
+    // 3. Collision Detection (Mountains can be up to 15% of radius)
     const distToPlanet = spaceship.mesh.position.distanceTo(p.group.position);
-    if (distToPlanet < p.radius + 1500) {
+    if (distToPlanet < p.radius * 1.25) {
       const dirFromPlanet = new THREE.Vector3().subVectors(spaceship.mesh.position, p.group.position).normalize();
       
       // Convert dirFromPlanet to planet's local space
       const localDirFromPlanet = dirFromPlanet.clone().applyQuaternion(p.group.quaternion.clone().invert());
-      const actualTerrainHeight = TerrainBuilder.getHeight(localDirFromPlanet, p.radius);
+      const actualTerrainHeight = TerrainBuilder.getHeight(localDirFromPlanet, p.radius, p.biome);
 
       if (distToPlanet < actualTerrainHeight + 2) {
         spaceship.handleCollision(dirFromPlanet, actualTerrainHeight + 2, p.group.position);
@@ -1122,6 +1224,9 @@ function animate() {
       p.update(camera.position);
     }
     
+    // Fog removed per user request (pure realism, no screen-space effects)
+    scene.fog = null;
+
     renderScene.camera = camera;
     composer.render();
   } else {
