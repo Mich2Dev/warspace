@@ -24,6 +24,21 @@ export class Planet {
     this.quadtrees = faces.map(face => {
       return new Quadtree(this.group, face.localUp, this.radius, this.color);
     });
+
+    // Create Atmosphere
+    const atmoGeometry = new THREE.SphereGeometry(this.radius * 1.05, 64, 64);
+    
+    // Add glowing atmosphere effect
+    const atmoMaterial = new THREE.MeshStandardMaterial({
+      color: this.color,
+      transparent: true,
+      opacity: 0.15,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    this.atmosphere = new THREE.Mesh(atmoGeometry, atmoMaterial);
+    this.group.add(this.atmosphere);
   }
 
   update(cameraPosition) {

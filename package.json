@@ -12,6 +12,7 @@
     "vite": "^8.1.1"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "express": "^5.2.1",
     "lil-gui": "^0.21.0",
     "simplex-noise": "^4.0.3",

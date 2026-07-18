@@ -7,22 +7,77 @@
     <title>nms_clone</title>
   </head>
   <body>
+    <!-- Login Screen (Elegant & Classic) -->
+    <div id="login-screen">
+      <div class="login-panel elegant-panel">
+        <h1 class="elegant-title">No Man's Clone</h1>
+        <p class="elegant-subtitle">Ingresa tus credenciales para comenzar tu viaje.</p>
+        <div class="input-group elegant-input">
+          <input type="text" id="login-username" placeholder="Nombre de Piloto" />
+        </div>
+        <div class="input-group elegant-input">
+          <input type="password" id="login-password" placeholder="Contraseña" />
+        </div>
+        <button id="btn-login" class="btn-elegant fade-in-delay">INGRESAR AL UNIVERSO</button>
+        <div id="login-error" class="elegant-error" style="display: none;">Error</div>
+      </div>
+    </div>
+
     <div id="app"></div>
-    <div class="ui">
-      <h1>Controles de Vuelo</h1>
-      <ul>
-        <li><strong>Click:</strong> Capturar Mouse (Jugar)</li>
-        <li><strong>Mouse:</strong> Apuntar (Pitch / Yaw)</li>
-        <li><strong>W / S:</strong> Acelerar / Frenar</li>
-        <li><strong>A / D:</strong> Rotar sobre el eje (Roll)</li>
-        <li><strong>Shift:</strong> Turbo (Boost)</li>
-        <li><strong>ESC:</strong> Liberar Mouse</li>
-        <li><strong>M:</strong> Abrir / Cerrar Mapa Galáctico</li>
-        <li><strong>Numpad 5:</strong> Anclar a la Superficie (Modo Terrestre)</li>
-        <li><strong>Numpad 8:</strong> Despegar (Modo Vuelo)</li>
-      </ul>
+    <div class="ui" style="display: none;">
+      <!-- Pause Menu (Glassmorphism Overlay) -->
+      <div id="pause-menu" class="glass-panel" style="display: none;">
+        <div class="pause-header">
+          <h2>SISTEMAS DE NAVE</h2>
+          <div class="pause-tabs">
+            <button class="tab-btn active" data-target="tab-controls">CONTROLES</button>
+            <button class="tab-btn" data-target="tab-social">SOCIAL</button>
+            <button class="tab-btn" data-target="tab-options">OPCIONES</button>
+          </div>
+        </div>
+        
+        <div class="pause-body">
+          <!-- Tab: Controls -->
+          <div id="tab-controls" class="tab-content active">
+            <ul>
+              <li><strong>Mouse:</strong> Apuntar (Pitch / Yaw)</li>
+              <li><strong>W / S:</strong> Acelerar / Frenar</li>
+              <li><strong>A / D:</strong> Rotar sobre el eje (Roll)</li>
+              <li><strong>Shift:</strong> Turbo (Boost)</li>
+              <li><strong>ENTER:</strong> Chat Multijugador</li>
+              <li><strong>ESC:</strong> Menú de Sistemas</li>
+              <li><strong>M:</strong> Abrir / Cerrar Mapa Galáctico</li>
+              <li><strong>G</strong> (en mapa): Cambiar entre Sistema Solar y Vía Láctea</li>
+              <li><strong>Numpad 5:</strong> Anclar a la Superficie</li>
+              <li><strong>Numpad 8:</strong> Despegar (Modo Vuelo)</li>
+            </ul>
+          </div>
+          
+          <!-- Tab: Social -->
+          <div id="tab-social" class="tab-content" style="display: none;">
+            <div class="social-header">
+              <h3>TU CLAN: <span id="my-clan-name">Ninguno</span></h3>
+              <button id="btn-create-clan" class="btn-action">CREAR ESCUADRÓN</button>
+              <button id="btn-leave-clan" class="btn-action" style="display: none; color: #ff4444;">ABANDONAR ESCUADRÓN</button>
+            </div>
+            <h4>JUGADORES EN EL SECTOR</h4>
+            <ul id="social-players-list">
+              <!-- Populated dynamically via JS -->
+            </ul>
+          </div>
+          
+          <!-- Tab: Options -->
+          <div id="tab-options" class="tab-content" style="display: none;">
+            <p>Ajustes de Video y Audio próximamente...</p>
+          </div>
+        </div>
+        
+        <div class="pause-footer">
+          <button id="btn-resume-game" class="btn-action pulse">REANUDAR VUELO [CLICK]</button>
+        </div>
+      </div>
       <!-- Navigation Computer Panel -->
-      <div id="nav-computer" class="nav-panel">
+      <div id="nav-computer" class="nav-panel" style="display: none;">
         <div class="nav-header">
           <h2>NAV-COMPUTER</h2>
           <span class="autopilot-status" id="autopilot-status">STANDBY</span>
@@ -34,6 +89,10 @@
         <div class="nav-section">
           <h3>CONTACTOS RADAR</h3>
           <ul id="nav-friends-list"></ul>
+        </div>
+        <div class="nav-section" id="planet-info-panel" style="display: none; padding: 10px; background: rgba(0, 50, 100, 0.4); border-left: 2px solid #00ffff; margin-bottom: 10px;">
+          <h3 id="planet-info-title" style="color: #00ffff; margin-bottom: 5px; font-size: 14px; text-transform: uppercase;">PLANETA</h3>
+          <p id="planet-info-desc" style="font-size: 12px; color: #aaddff; line-height: 1.4; margin: 0;">Descripción de la enciclopedia astronómica...</p>
         </div>
         <button id="btn-engage-autopilot" class="btn-engage" disabled>ENGAGE AUTOPILOT</button>
       </div>
@@ -49,6 +108,34 @@
       
       <div id="damage-overlay"></div>
       <div id="death-screen">HAS SIDO DESTRUIDO<br><span>Reapareciendo en 3...</span></div>
+      
+      <!-- Settings Button -->
+      <button id="btn-settings" class="ui-button" style="position: absolute; top: 20px; right: 20px; z-index: 50;">⚙️ AJUSTES</button>
+      
+      <!-- Multiplayer Chat UI -->
+      <div id="chat-container">
+        <ul id="chat-messages"></ul>
+        <form id="chat-form">
+          <input id="chat-input" type="text" autocomplete="off" placeholder="Presiona ENTER para chatear..." />
+        </form>
+      </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div id="settings-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,20,40,0.9); z-index: 1000; align-items: center; justify-content: center;">
+      <div style="background: rgba(0, 50, 100, 0.9); border: 2px solid #00ffff; padding: 30px; border-radius: 10px; min-width: 400px; max-height: 80vh; overflow-y: auto;">
+        <h2 style="color: #00ffff; font-family: monospace; text-align: center; margin-top: 0;">CONFIGURACIÓN DE TECLAS</h2>
+        <p style="color: #aaddff; font-family: monospace; font-size: 12px; text-align: center;">Haz clic en un botón y presiona la nueva tecla para asignarla.</p>
+        
+        <div id="keybinds-list" style="margin-top: 20px;">
+          <!-- Dynamically populated by JS -->
+        </div>
+        
+        <div style="margin-top: 30px; display: flex; justify-content: space-between;">
+          <button id="btn-settings-reset" style="padding: 10px 20px; background: transparent; border: 1px solid #ff4444; color: #ff4444; cursor: pointer; font-family: monospace;">RESTAURAR</button>
+          <button id="btn-settings-close" style="padding: 10px 20px; background: #00ffff; border: none; color: #000; cursor: pointer; font-weight: bold; font-family: monospace;">CERRAR</button>
+        </div>
+      </div>
     </div>
     
     <!-- HUD Navigation Marker -->
@@ -74,6 +161,9 @@
     
     <!-- Big Screen Alert -->
     <div id="screen-alert">¡DESTINO FIJADO!</div>
+    
+    <!-- Map Mode Label -->
+    <div id="map-mode-label" style="display:none; position:fixed; top:15px; left:50%; transform:translateX(-50%); background:rgba(0,20,40,0.8); border:1px solid #00ffff; padding:8px 20px; color:#00ffff; font-family:monospace; font-size:13px; z-index:200; text-align:center; pointer-events:none;"></div>
     
     <script type="module" src="/src/main.js"></script>
     

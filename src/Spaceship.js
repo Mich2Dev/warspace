@@ -17,9 +17,10 @@ export class Spaceship {
     const loader = new GLTFLoader();
     loader.load('/nave1.glb', (gltf) => {
       const model = gltf.scene;
-      // Adjust scale and rotation of the custom model so it faces forward (-Z)
-      // This might require tweaking depending on how the original model was exported
-      model.scale.set(1, 1, 1); 
+      // AJUSTA EL TAMAÑO DE TU NAVE AQUÍ:
+      // Si la nave se ve muy pequeña, cambia estos 1 por números más altos (ej. 5, 5, 5)
+      // Si se ve muy grande, cámbialos por números más bajos (ej. 0.2, 0.2, 0.2)
+      model.scale.set(2.5, 2.5, 2.5); 
       // model.rotation.y = Math.PI; // Adjust if the model is backwards
       this.mesh.add(model);
     });
@@ -60,26 +61,25 @@ export class Spaceship {
       });
     }
     
-    // Exact calibrated nozzle positions
+    // Exact calibrated nozzle positions (Scaled up by 2.5)
     this.nozzleSettings = [
-      { pos: new THREE.Vector3(0, 0.16, 11.55), scale: 1.8 },       // Center main
-      { pos: new THREE.Vector3(-1.56, 2.14, 13.5), scale: 0.9 },     // Inner Left
-      { pos: new THREE.Vector3(1.56, 2.14, 13.5), scale: 0.9 },      // Inner Right
-      { pos: new THREE.Vector3(-5.26, -0.58, 13.5), scale: 2.1 },    // Outer Left
-      { pos: new THREE.Vector3(5.26, -0.58, 13.5), scale: 2.1 }      // Outer Right
+      { pos: new THREE.Vector3(0, 0.4, 28.875), scale: 1.8 },       // Center main
+      { pos: new THREE.Vector3(-3.9, 5.35, 33.75), scale: 0.9 },     // Inner Left
+      { pos: new THREE.Vector3(3.9, 5.35, 33.75), scale: 0.9 },      // Inner Right
+      { pos: new THREE.Vector3(-13.15, -1.45, 33.75), scale: 2.1 },    // Outer Left
+      { pos: new THREE.Vector3(13.15, -1.45, 33.75), scale: 2.1 }      // Outer Right
     ];
     
     // Add a glowing point light to the engine
-    this.engineLight = new THREE.PointLight(0x00aaff, 4, 150);
-    this.engineLight.position.set(0, -6, 20);
+    this.engineLight = new THREE.PointLight(0x00aaff, 4, 150 * 2.5);
+    this.engineLight.position.set(0, -15, 50);
     this.mesh.add(this.engineLight);
     
-    // Flight parameters (Massively boosted to traverse solar system!)
+    // Movement Properties
     this.speed = 0;
-    this.maxSpeed = 15000;
-    this.acceleration = 3000;
-    
-    this.rotationSpeed = 1.5; // rad/sec
+    this.maxSpeed = 125000; // Increased 5x for scaled up system!
+    this.acceleration = 10000; // Faster acceleration too
+    this.rotationSpeed = 2.0; // rad/sec
     
     // We attach a dummy object for the camera to follow
     this.cameraBoom = new THREE.Object3D();
@@ -94,11 +94,13 @@ export class Spaceship {
     
     this.mode = 'FLIGHT'; // 'FLIGHT' or 'HOVER'
     this.hoverPlanet = null; // Planet data for anchoring
-    this.hoverHeightOffset = 5; // Distance to hover above terrain
+    this.hoverHeightOffset = 90; // Aumentado para evitar enterrarse ya que la nave es más grande
+    this.canAutoAnchor = true; // Prevents re-anchoring immediately after takeoff
     
     // Autopilot
     this.autoTarget = null; // { type: 'planet'|'player', obj: Ref }
     this.autopilotEngaged = false;
+    this.inGravityWell = false; // Tracks if we are inside planetary gravity
     
     // Combat
     this.hp = 100;
@@ -106,8 +108,8 @@ export class Spaceship {
   }
 
   onMouseMove(movementX, movementY) {
-    if (this.mode !== 'FLIGHT') return; // Ignore mouse when anchored
     const mouseSensitivity = 0.002;
+    
     this.yawAccumulator -= movementX * mouseSensitivity;
     this.pitchAccumulator -= movementY * mouseSensitivity;
   }
@@ -154,9 +156,15 @@ export class Spaceship {
     this.camera.quaternion.slerp(targetQuaternion, 0.2); // Smooth turning
     
     // Dynamic FOV for hyperspace warp effect!
-    // Base FOV is 75, max FOV is 115 on full boost
-    const speedRatio = Math.max(0, this.speed / (this.maxSpeed * 2));
-    const targetFov = 75 + (speedRatio * 40);
+    // Prevent extreme deformation by clamping the ratio, but allow crazy warp for Spacebar
+    let speedRatio = 0;
+    if (this.mode === 'FLIGHT') {
+      speedRatio = Math.max(0, Math.min(1.0, this.speed / (this.maxSpeed * 50)));
+    } else {
+      // In hover mode, speeds are lower but feel faster because you are close to the ground
+      speedRatio = Math.max(0, Math.min(1.0, this.speed / 50000));
+    }
+    const targetFov = 75 + (speedRatio * 60);
     this.camera.fov += (targetFov - this.camera.fov) * 0.1;
     this.camera.updateProjectionMatrix();
   }
@@ -165,9 +173,11 @@ export class Spaceship {
     // Engine visual defaults
     let targetFlameScale = 0.5; // Idle is visible
     let targetFlameColor = 0x0044ff;
+    let currentMaxSpeed = this.maxSpeed;
     
     // Disengage autopilot if user manually steers or throttles
-    if (this.autopilotEngaged && (keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'])) {
+    const conf = window.GameConfig.keys;
+    if (this.autopilotEngaged && (keys[conf.forward] || keys[conf.backward] || keys[conf.rollLeft] || keys[conf.rollRight])) {
       this.autopilotEngaged = false;
       const statusUI = document.getElementById('autopilot-status');
       if (statusUI) {
@@ -182,43 +192,79 @@ export class Spaceship {
       let isPlayer = this.autoTarget.type === 'player';
       
       if (this.autoTarget.type === 'planet') {
-        targetPos.copy(this.autoTarget.obj.group.position);
+        const planetCenter = this.autoTarget.obj.group.position;
+        const dirToPlanet = new THREE.Vector3().subVectors(planetCenter, this.mesh.position).normalize();
+        // Target is High Orbit (Radius + 20000 units above surface)
+        const orbitRadius = this.autoTarget.obj.radius + 20000;
+        targetPos.copy(planetCenter).sub(dirToPlanet.multiplyScalar(orbitRadius));
       } else if (isPlayer) {
-        // Apuntar al lado derecho de la nave amiga para volar en formación (offset de 50 unidades)
-        const rightOffset = new THREE.Vector3(1, 0, 0)
-          .applyQuaternion(this.autoTarget.obj.mesh.quaternion)
-          .multiplyScalar(50);
-        targetPos.copy(this.autoTarget.obj.mesh.position).add(rightOffset);
-      }
+        if (!this._lastFriendPos) {
+            this._lastFriendPos = this.autoTarget.obj.mesh.position.clone();
+            this._smoothedFriendVel = new THREE.Vector3();
+            this._formationForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.autoTarget.obj.mesh.quaternion);
+        }
+        
+        const safeDelta = delta > 0 ? delta : 0.016;
+        // Medimos la velocidad LINEAL del amigo (ignorando si rota sobre sí mismo)
+        const rawFriendVel = new THREE.Vector3().subVectors(this.autoTarget.obj.mesh.position, this._lastFriendPos).divideScalar(safeDelta);
+        this._lastFriendPos.copy(this.autoTarget.obj.mesh.position);
+        
+        // Suavizado EMA para la velocidad del amigo
+        this._smoothedFriendVel.lerp(rawFriendVel, 10.0 * safeDelta); 
+        
+        // Actualizar el vector frontal de formación SÓLO si la nave amiga se está moviendo.
+        if (this._smoothedFriendVel.lengthSq() > 10.0) {
+            this._formationForward.copy(this._smoothedFriendVel).normalize();
+        }
+        
+        // Evitar el error de lookAt (NaNs) cuando se mira exactamente hacia arriba o abajo
+        const upVector = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(this._formationForward.y) > 0.99) {
+            upVector.set(0, 0, 1);
+        }
+        
+        // Construimos la rotación de formación basada en el vector de movimiento real
+        const lookMatrix = new THREE.Matrix4();
+        lookMatrix.lookAt(new THREE.Vector3(0,0,0), this._formationForward, upVector);
+        const formationQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
+        
+        // Apuntar atrás y a la derecha de la nave amiga para volar en formación
+        // X=40 (derecha), Y=15 (arriba), Z=60 (atrás, asumiendo -Z frontal)
+        const formationOffset = new THREE.Vector3(40, 15, 60).applyQuaternion(formationQuat);
+        targetPos.copy(this.autoTarget.obj.mesh.position).add(formationOffset);
+      } 
       
-      const dist = this.mesh.position.distanceTo(targetPos);
+      const positionError = new THREE.Vector3().subVectors(targetPos, this.mesh.position);
+      const dist = positionError.length();
       
-      // Auto-throttle
-      if (dist > 5000) {
-        // Boost if far
-        this.speed += this.acceleration * 2 * delta;
-        targetFlameScale = 3.0;
-        targetFlameColor = 0xffaa00;
-      } else if (dist > 150) {
-        // Cruise
-        this.speed += this.acceleration * delta;
-        targetFlameScale = 1.2;
-        targetFlameColor = 0x00ffff;
+      // Usar la velocidad suavizada si existe (para naves), de lo contrario 0 (para planetas)
+      const feedForwardVel = this._smoothedFriendVel || new THREE.Vector3(0, 0, 0);
+      
+      // Controlador PD con Kp más suave. 
+      // Kp bajo (0.8) hace que la nave no pegue acelerones violentos si el offset salta de golpe.
+      const kP = 0.8; 
+      const desiredVelocity = positionError.clone().multiplyScalar(kP).add(feedForwardVel);
+      const desiredSpeed = desiredVelocity.length();
+      
+      if (desiredSpeed > 1.0) {
+          // Apuntar directamente hacia el vector de velocidad deseado.
+          // Al llegar al punto (Error=0), desiredVelocity = Velocidad del amigo.
+          // Por lo tanto, nos alinearemos solos de forma natural, sin forzar slerp de rotaciones.
+          const lookTarget = this.mesh.position.clone().add(desiredVelocity);
+          const lookMatrix = new THREE.Matrix4();
+          lookMatrix.lookAt(this.mesh.position, lookTarget, this.mesh.up);
+          const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
+          
+          const turnRate = dist < 200 ? 6.0 : 3.0;
+          this.mesh.quaternion.slerp(targetQuat, turnRate * delta);
+          
+          this.speed = THREE.MathUtils.lerp(this.speed, desiredSpeed, delta * 3.0);
       } else {
-        // Brake hard when arriving to avoid overshoot
-        // Frame-independent lerp towards 0 speed
-        this.speed = THREE.MathUtils.lerp(this.speed, 0, delta * 3.0);
-        targetFlameScale = 0.2;
+          this.speed = THREE.MathUtils.lerp(this.speed, 0, delta * 4.0);
       }
       
-      // Auto-steer (Pure Pursuit)
-      const lookMatrix = new THREE.Matrix4();
-      lookMatrix.lookAt(this.mesh.position, targetPos, this.mesh.up);
-      const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMatrix);
-      
-      // Turn much faster when close to avoid death-spiral / orbiting
-      const turnRate = dist < 400 ? 8.0 : 2.5;
-      this.mesh.quaternion.slerp(targetQuat, turnRate * delta);
+      targetFlameScale = this.speed > 800 ? 3.0 : (this.speed > 50 ? 1.2 : 0.2);
+      targetFlameColor = this.speed > 800 ? 0xffaa00 : 0x00ffff;
       
       // Reset accumulators so manual mouse doesn't jerk the ship upon disengage
       this.yawAccumulator = 0;
@@ -226,21 +272,38 @@ export class Spaceship {
       
     } else {
       // Manual Thrust
-      if (keys['KeyW']) {
+      const conf = window.GameConfig.keys;
+      
+      if (keys[conf.forward]) {
         this.speed += this.acceleration * delta;
         targetFlameScale = 1.2;
         targetFlameColor = 0x00ffff;
-      } else if (keys['KeyS']) {
+      } else if (keys[conf.backward]) {
         this.speed -= this.acceleration * delta;
         targetFlameScale = 0.0;
       } else {
         this.speed *= 0.98; // Drag
       }
       
-      if (keys['ShiftLeft'] || keys['ShiftRight']) {
-        this.speed += this.acceleration * 2 * delta; // Boost!
+      if (keys[conf.hyperdrive]) {
+        if (this.inGravityWell) {
+          // Atmospheric limit: no full hyperdrive inside a gravity well
+          this.speed += this.acceleration * 10 * delta; 
+          targetFlameScale = 4.0; 
+          targetFlameColor = 0xff00ff; 
+          currentMaxSpeed = this.maxSpeed * 10;
+        } else {
+          // Deep space hyperdrive
+          this.speed += this.acceleration * 100 * delta; 
+          targetFlameScale = 8.0; 
+          targetFlameColor = 0xff00ff; 
+          currentMaxSpeed = this.maxSpeed * 50;
+        }
+      } else if (keys[conf.boost]) {
+        this.speed += this.acceleration * 5 * delta; // Mega Boost!
         targetFlameScale = 3.0; // Massive flame
         targetFlameColor = 0xffaa00; // Turns orange/red on boost!
+        currentMaxSpeed = this.maxSpeed * 5;
       }
       
       // Apply accumulated mouse rotations
@@ -251,11 +314,11 @@ export class Spaceship {
       this.yawAccumulator *= 0.5;
       this.pitchAccumulator *= 0.5;
       
-      // Roll (A / D)
-      if (keys['KeyA']) {
+      // Roll
+      if (keys[conf.rollLeft]) {
         this.mesh.rotateZ(this.rotationSpeed * delta);
       }
-      if (keys['KeyD']) {
+      if (keys[conf.rollRight]) {
         this.mesh.rotateZ(-this.rotationSpeed * delta);
       }
     }
@@ -264,7 +327,7 @@ export class Spaceship {
     this.mesh.translateZ(-this.speed * delta);
     
     // Clamp speed
-    this.speed = Math.max(-this.maxSpeed * 0.2, Math.min(this.speed, this.maxSpeed * 2));
+    this.speed = Math.max(-this.maxSpeed * 0.2, Math.min(this.speed, currentMaxSpeed));
     
     // Save for network telemetry
     this.flameScale = targetFlameScale;
@@ -300,7 +363,7 @@ export class Spaceship {
             40 + Math.random() * 20 + targetFlameScale * 30
           );
           
-          p.baseScale = nozzle.scale * targetFlameScale * 2.5;
+          p.baseScale = nozzle.scale * targetFlameScale * 0.7;
           p.mesh.material.color.setHex(targetFlameColor);
         }
       }
@@ -327,67 +390,144 @@ export class Spaceship {
   updateHover(delta, keys) {
     if (!this.hoverPlanet) return;
     
-    // Hover speed is much slower than flight speed
-    const maxHoverSpeed = 100;
+    const conf = window.GameConfig.keys;
     
-    // Thrust (Forward / Backward)
-    if (keys['KeyW']) {
-      this.speed += this.acceleration * delta;
-    } else if (keys['KeyS']) {
-      this.speed -= this.acceleration * delta;
+    // Pull the mouse up to manually raise the nose and take off!
+    if (this.pitchAccumulator > 0.03) {
+      this.mode = 'FLIGHT';
+      this.hoverPlanet = null;
+      this.canAutoAnchor = false;
+      
+      // Manual flight takeoff (raising the nose with pointer)
+      this.speed = Math.max(this.speed, 1000); // Give enough speed to escape the gravity auto-anchor instantly
+      this.mesh.translateY(20); // Small bump to prevent scraping the floor instantly
+      this.pitchAccumulator = 0; // CRITICAL: Reset pitch so it doesn't trigger repeatedly
+      
+      // Remove the autopilot UI
+      const statusUI = document.getElementById('autopilot-status');
+      if (statusUI) {
+        statusUI.innerText = 'STANDBY';
+        statusUI.className = 'autopilot-status';
+      }
+      return; // Exit updateHover to switch modes
+    }
+    
+    // --- Anchor Ship to Rotating Planet ---
+    // El planeta gira a 0.005 * universalTime, por lo que su delta de rotación es 0.005 * delta.
+    // Esto asegura que la nave rote con el planeta y el terreno no se mueva como una cinta de correr.
+    const planetRotDelta = 0.005 * delta;
+    this.mesh.position.sub(this.hoverPlanet.group.position);
+    this.mesh.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), planetRotDelta);
+    this.mesh.position.add(this.hoverPlanet.group.position);
+    this.mesh.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), planetRotDelta);
+    
+    // Apply mouse rotations
+    this.mesh.rotateY(this.yawAccumulator);
+    this.mesh.rotateX(this.pitchAccumulator);
+    
+    // Dampen mouse movement
+    this.yawAccumulator *= 0.5;
+    this.pitchAccumulator *= 0.5;
+    
+    // Roll (Atmosphere has more air resistance, slower roll)
+    if (keys[conf.rollLeft]) {
+      this.mesh.rotateZ((this.rotationSpeed * 0.8) * delta);
+    }
+    if (keys[conf.rollRight]) {
+      this.mesh.rotateZ((-this.rotationSpeed * 0.8) * delta);
+    }
+    
+    // Hover / Atmospheric speed logic
+    let currentMaxSpeed = this.maxSpeed * 0.2; // Slower in atmosphere
+    let targetFlameScale = (this.speed > 0) ? (this.speed / currentMaxSpeed) * 1.5 : 0.1;
+    let targetFlameColor = 0x00ffff;
+    
+    if (keys[conf.hyperdrive]) {
+      this.speed += this.acceleration * 8 * delta;
+      currentMaxSpeed = this.maxSpeed * 3;
+      targetFlameScale = 4.0;
+      targetFlameColor = 0xff00ff;
+    } else if (keys[conf.boost]) {
+      this.speed += this.acceleration * 4 * delta;
+      currentMaxSpeed = this.maxSpeed;
+      targetFlameScale = 3.0;
+      targetFlameColor = 0xffaa00;
+    } else if (keys[conf.forward]) {
+      this.speed += this.acceleration * 2 * delta;
+    } else if (keys[conf.backward]) {
+      this.speed -= this.acceleration * 2 * delta;
     } else {
-      this.speed *= 0.8; // High friction on ground
+      // Air friction
+      this.speed = THREE.MathUtils.lerp(this.speed, 0, delta * 1.5);
     }
     
-    // Clamp hover speed
-    this.speed = Math.max(-maxHoverSpeed, Math.min(this.speed, maxHoverSpeed));
-    
-    // Steer (A / D)
-    // In hover mode, A/D rotates the ship left/right (Yaw), not roll.
-    if (keys['KeyA']) {
-      this.mesh.rotateY(this.rotationSpeed * delta);
-    }
-    if (keys['KeyD']) {
-      this.mesh.rotateY(-this.rotationSpeed * delta);
-    }
-    
-    // Minimal flame when hovering
-    const hoverFlameScale = (this.speed > 0) ? (this.speed / maxHoverSpeed) * 0.5 : 0.1;
-    this.flameScale = hoverFlameScale;
-    this.updateParticles(delta, hoverFlameScale, 0x00ffff);
+    this.speed = Math.max(-currentMaxSpeed * 0.2, Math.min(this.speed, currentMaxSpeed));
+    this.flameScale = targetFlameScale;
+    this.updateParticles(delta, targetFlameScale, targetFlameColor);
     
     // Move forward locally
     this.mesh.translateZ(-this.speed * delta);
     
-    // --- Align to Terrain ---
-    // Calculate vector from planet center to ship (Surface Normal)
-    const toShip = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize();
+    // --- Atmospheric Gravity & Terrain Collision ---
+    const pCenter = this.mesh.position.clone();
+    const toCore = new THREE.Vector3().subVectors(pCenter, this.hoverPlanet.group.position).normalize();
     
-    // Calculate exact terrain height at this position
-    const terrainHeight = TerrainBuilder.getHeight(toShip, this.hoverPlanet.radius);
+    // Gentle Gravity Pull
+    this.mesh.position.add(toCore.clone().multiplyScalar(-600 * delta));
     
-    // Snap position to terrain height + hover offset
-    const targetPosition = this.hoverPlanet.group.position.clone().add(toShip.clone().multiplyScalar(terrainHeight + this.hoverHeightOffset));
-    this.mesh.position.lerp(targetPosition, 0.5); // Smooth snapping
+    // Muestreo de altura procedural para el centro
+    const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
+    const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
+    const terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius);
     
-    // --- Align ship UP vector with Surface Normal without spinning ---
-    const up = toShip;
-    // Get current forward vector (Negative Z axis)
-    const currentForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion).normalize();
+    const targetDist = terrainHeight + this.hoverHeightOffset;
+    const currentDist = this.mesh.position.distanceTo(this.hoverPlanet.group.position);
     
-    // Calculate new orthogonal right vector (X axis)
-    const right = new THREE.Vector3().crossVectors(currentForward, up).normalize();
-    
-    // Calculate true orthogonal forward vector (Negative Z axis)
-    const trueForward = new THREE.Vector3().crossVectors(up, right).normalize();
-    
-    // Build a rotation matrix from X, Y, Z axes
-    // Note: Z axis is the opposite of forward
-    const matrix = new THREE.Matrix4().makeBasis(right, up, trueForward.negate());
-    
-    // Smoothly rotate the ship to this new orientation
-    const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(matrix);
-    this.mesh.quaternion.slerp(targetQuaternion, 0.2);
+    // Si la nave está a punto de estrellarse (por debajo del offset de planeo)
+    if (currentDist < targetDist) {
+      // Repulsive force to keep it above ground
+      const targetPosition = this.hoverPlanet.group.position.clone().add(toCore.clone().multiplyScalar(targetDist));
+      this.mesh.position.copy(targetPosition);
+      
+      // Auto-level the ship slightly so it doesn't nosedive directly into the dirt
+      const currentForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion).normalize();
+      
+      // Multi-Raycast para inclinar con el terreno solo si estamos rozando el suelo
+      const offsetDist = 200; 
+      const shipForwardVec = new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion).normalize();
+      const shipRightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(this.mesh.quaternion).normalize();
+      
+      const pForward = this.mesh.position.clone().add(shipForwardVec.clone().multiplyScalar(offsetDist));
+      const pRight = this.mesh.position.clone().add(shipRightVec.clone().multiplyScalar(offsetDist));
+      
+      const hForward = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius);
+      const hRight = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pRight, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius);
+      
+      const wCenter = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().multiplyScalar(terrainHeight));
+      const wForward = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().multiplyScalar(hForward));
+      const wRight = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(pRight, this.hoverPlanet.group.position).normalize().multiplyScalar(hRight));
+      
+      const v1 = new THREE.Vector3().subVectors(wForward, wCenter);
+      const v2 = new THREE.Vector3().subVectors(wRight, wCenter);
+      let terrainNormal = new THREE.Vector3().crossVectors(v2, v1).normalize();
+      if (terrainNormal.dot(toCore) < 0) terrainNormal.negate();
+      if (terrainNormal.lengthSq() < 0.1 || isNaN(terrainNormal.x)) terrainNormal = toCore;
+      
+      // Level the ship with the terrain normal
+      let right = new THREE.Vector3().crossVectors(currentForward, terrainNormal);
+      if (right.lengthSq() < 0.001) {
+        const fallbackDir = new THREE.Vector3(1, 0, 0).applyQuaternion(this.mesh.quaternion).normalize();
+        right.crossVectors(fallbackDir, terrainNormal);
+      }
+      right.normalize();
+      
+      const trueForward = new THREE.Vector3().crossVectors(terrainNormal, right).normalize();
+      const matrix = new THREE.Matrix4().makeBasis(right, terrainNormal, trueForward.negate());
+      
+      const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(matrix);
+      // Fuerte slerp para enderezar la nave y evitar que cabecee contra el suelo
+      this.mesh.quaternion.slerp(targetQuaternion, delta * 8.0);
+    }
   }
 
   handleCollision(surfaceNormal, targetDistance, planetCenter) {
@@ -396,8 +536,13 @@ export class Spaceship {
     this.mesh.position.copy(targetPosition);
     
     // 2. Kill the speed or bounce back slightly
-    // If you were going very fast forward, bounce back a bit
-    this.speed = -this.speed * 0.5;
+    if (this.mode === 'FLIGHT') {
+      // If you were flying fast, bounce back
+      this.speed = -this.speed * 0.5;
+    } else {
+      // If hovering, just lose speed, don't violently bounce backwards
+      this.speed *= 0.8;
+    }
   }
 
   takeDamage(newHp) {

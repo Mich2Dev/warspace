@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TerrainBuilder } from './TerrainBuilder.js';
 
-const MAX_DEPTH = 6;
+const MAX_DEPTH = 8; // Increased depth for AAA planetary detail
 
 export class Quadtree {
   constructor(group, localUp, radius, color, depth = 0, center = new THREE.Vector2(0,0), size = 2) {
@@ -52,7 +52,9 @@ export class Quadtree {
   }
 
   update(cameraPosition) {
-    const distance = cameraPosition.distanceTo(this.worldCenter);
+    // Dynamically calculate the chunk's true world center, factoring in planet rotation and orbital movement
+    const currentWorldCenter = this.localCenter.clone().applyQuaternion(this.group.quaternion).add(this.group.position);
+    const distance = cameraPosition.distanceTo(currentWorldCenter);
     
     // Distance thresholds (heuristic: split if distance < size of node in world space * factor)
     const worldSize = this.size * this.radius; // rough approx
