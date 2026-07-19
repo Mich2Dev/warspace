@@ -11,8 +11,16 @@ export class Spaceship {
     this.mesh = new THREE.Group();
     // Start at Z = 15000 so we are well outside the first planet (Radius 10000)
     this.mesh.position.set(0, 0, 15000);
+    this.mesh.position.set(0, 0, 15000);
     this.scene.add(this.mesh);
     this.headlightCooldown = 0;
+    
+    // Ship Health System
+    this.maxHp = 100;
+    this.hp = 100;
+    this.isDead = false;
+    this.lastDamageTime = 0;
+    this.updateHealthUI();
 
     // Load custom GLB Model
     const loader = new GLTFLoader();
@@ -55,6 +63,75 @@ export class Spaceship {
     this.headlightsActive = true;
     this.mesh.add(this.headlights);
     
+    // --- Re-entry Plasma Shield ---
+    // Make the cone openEnded (true) so the flat circular base is removed, preventing it from looking like a weird planet from behind.
+    const shieldGeom = new THREE.ConeGeometry(10, 25, 32, 1, true);
+    shieldGeom.rotateX(-Math.PI / 2); // Point tip forward along Z
+    
+    const shieldVert = `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+        }
+    `;
+    const shieldFrag = `
+        varying vec2 vUv;
+        uniform float time;
+        uniform float intensity;
+        
+        float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
+        float noise(vec2 x) {
+            vec2 i = floor(x);
+            vec2 f = fract(x);
+            float a = hash(i);
+            float b = hash(i + vec2(1.0, 0.0));
+            float c = hash(i + vec2(0.0, 1.0));
+            float d = hash(i + vec2(1.0, 1.0));
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        }
+        
+        void main() {
+            vec2 uv = vUv;
+            uv.y -= time * 4.0; // Fast flowing plasma flowing backward
+            
+            float n = noise(uv * 10.0);
+            float n2 = noise(uv * 20.0 + vec2(time));
+            
+            float fire = (n * 0.5 + n2 * 0.5);
+            
+            // Mask to concentrate fire at the tip (uv.y goes 0 to 1)
+            float mask = smoothstep(0.1, 0.9, vUv.y);
+            
+            vec3 color = mix(vec3(1.0, 0.1, 0.0), vec3(1.0, 0.7, 0.1), fire);
+            color = mix(color, vec3(0.5, 0.8, 1.0), smoothstep(0.8, 1.0, fire * mask)); // Blue hot core
+            
+            float alpha = fire * mask * intensity;
+            gl_FragColor = vec4(color, alpha);
+        }
+    `;
+    
+    this.shieldUniforms = {
+        time: { value: 0 },
+        intensity: { value: 0 }
+    };
+    
+    const shieldMat = new THREE.ShaderMaterial({
+        vertexShader: shieldVert,
+        fragmentShader: shieldFrag,
+        uniforms: this.shieldUniforms,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    });
+    
+    this.plasmaShield = new THREE.Mesh(shieldGeom, shieldMat);
+    this.plasmaShield.position.set(0, 0, 5); // Shift forward to cover cockpit
+    this.plasmaShield.visible = false;
+    this.mesh.add(this.plasmaShield);
+    
     // Engine Thruster Flames (Real Volumetric Particle System)
     // 1. Procedural Glow Texture
     const canvas = document.createElement('canvas');
@@ -71,6 +148,7 @@ export class Spaceship {
     const particleTexture = new THREE.CanvasTexture(canvas);
     const particleMat = new THREE.SpriteMaterial({
       map: particleTexture,
+      color: new THREE.Color(1.0, 1.0, 1.0), // Reduced from 2.5 to fix blinding camera flash
       blending: THREE.AdditiveBlending,
       transparent: true,
       depthWrite: false
@@ -100,15 +178,15 @@ export class Spaceship {
       { pos: new THREE.Vector3(13.15, -1.45, 33.75), scale: 2.1 }      // Outer Right
     ];
     
-    // Add a glowing point light to the engine
-    this.engineLight = new THREE.PointLight(0x00aaff, 4, 150 * 2.5);
-    this.engineLight.position.set(0, -15, 50);
-    this.mesh.add(this.engineLight);
+    // Add a glowing point light to the engine (Disabled to prevent ghost flashes when camera swings)
+    // this.engineLight = new THREE.PointLight(0x00aaff, 4, 150 * 2.5);
+    // this.engineLight.position.set(0, -15, 50);
+    // this.mesh.add(this.engineLight);
     
     // Movement Properties
     this.speed = 0;
-    this.maxSpeed = 125000; // Increased 5x for scaled up system!
-    this.acceleration = 10000; // Faster acceleration too
+    this.maxSpeed = 250000; // Increased to match the new doubled planetary distances
+    this.acceleration = 25000; // Faster acceleration
     this.rotationSpeed = 2.0; // rad/sec
     
     // We attach a dummy object for the camera to follow
@@ -136,6 +214,13 @@ export class Spaceship {
     // Combat
     this.hp = 100;
     this.isDead = false;
+    
+    // Ensure the entire ship ignores frustum culling so it never disappears!
+    this.mesh.traverse((child) => {
+        if (child.isMesh || child.isSprite) {
+            child.frustumCulled = false;
+        }
+    });
   }
 
   onMouseMove(movementX, movementY) {
@@ -155,7 +240,83 @@ export class Spaceship {
     this.cameraBoom.position.y = this.cameraDistance * 0.25; 
   }
 
+  takeDamage(amount) {
+      if (this.isDead) return;
+      
+      // Invincibility frames (0.5s) to prevent instant death from scraping
+      const now = Date.now();
+      if (now - this.lastDamageTime < 500) return;
+      this.lastDamageTime = now;
+      
+      this.hp -= amount;
+      if (this.hp < 0) this.hp = 0;
+      
+      this.updateHealthUI();
+      
+      const overlay = document.getElementById('damage-overlay');
+      if (overlay) {
+          overlay.style.opacity = '1';
+          setTimeout(() => { overlay.style.opacity = '0'; }, 300);
+      }
+      
+      if (this.hp <= 0) {
+          this.die();
+      }
+  }
+  
+  updateHealthUI() {
+      const fill = document.getElementById('health-fill');
+      const text = document.getElementById('health-text');
+      if (fill && text) {
+          const pct = (this.hp / this.maxHp) * 100;
+          fill.style.width = pct + '%';
+          text.innerText = 'HP: ' + Math.ceil(this.hp);
+          
+          if (pct < 30) {
+              fill.style.backgroundColor = '#ff0000';
+          } else if (pct < 60) {
+              fill.style.backgroundColor = '#ffaa00';
+          } else {
+              fill.style.backgroundColor = '#00ffcc';
+          }
+      }
+  }
+  
+  die() {
+      this.isDead = true;
+      this.speed = 0;
+      this.mesh.visible = false;
+      
+      // Massive explosion
+      if (window.createSparks) {
+          window.createSparks(this.mesh.position, new THREE.Vector3(0,1,0), 2000);
+      }
+      
+      const deathScreen = document.getElementById('death-screen');
+      if (deathScreen) deathScreen.style.display = 'flex';
+      
+      setTimeout(() => this.respawn(), 3000);
+  }
+  
+  respawn() {
+      this.hp = this.maxHp;
+      this.isDead = false;
+      this.mesh.visible = true;
+      this.updateHealthUI();
+      
+      // Respawn far away
+      this.mesh.position.set(0, 0, 15000);
+      this.speed = 0;
+      this.yawAccumulator = 0;
+      this.pitchAccumulator = 0;
+      this.mesh.rotation.set(0, 0, 0);
+      
+      const deathScreen = document.getElementById('death-screen');
+      if (deathScreen) deathScreen.style.display = 'none';
+  }
+
   update(delta, keys) {
+    if (this.isDead) return;
     if (this.mode === 'FLIGHT') {
       this.updateFlight(delta, keys);
     } else if (this.mode === 'HOVER') {
@@ -365,10 +526,15 @@ export class Spaceship {
         this.mesh.rotateZ(-this.rotationSpeed * delta);
       }
     }
-
+    
     // Move forward
     this.mesh.translateZ(-this.speed * delta);
     
+    // Update shield time
+    if (this.shieldUniforms) {
+        this.shieldUniforms.time.value += 0.016; // Approx 60fps delta
+    }
+
     // Clamp speed
     this.speed = Math.max(-this.maxSpeed * 0.2, Math.min(this.speed, currentMaxSpeed));
     
@@ -464,7 +630,7 @@ export class Spaceship {
     const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
     const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
     
-    let terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome);
+    let terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome, true);
     
     // Rest on the surface
     const surfaceNormal = localDir.clone().applyQuaternion(this.hoverPlanet.group.quaternion).normalize();
@@ -573,7 +739,7 @@ export class Spaceship {
     // Muestreo de altura procedural para el centro
     const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
     const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
-    const terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome);
+    const terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome, true);
     
     const targetDist = terrainHeight + this.hoverHeightOffset;
     const currentDist = this.mesh.position.distanceTo(this.hoverPlanet.group.position);
@@ -595,8 +761,8 @@ export class Spaceship {
       const pForward = this.mesh.position.clone().add(shipForwardVec.clone().multiplyScalar(offsetDist));
       const pRight = this.mesh.position.clone().add(shipRightVec.clone().multiplyScalar(offsetDist));
       
-      const hForward = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius, this.hoverPlanet.biome);
-      const hRight = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pRight, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius, this.hoverPlanet.biome);
+      const hForward = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius, this.hoverPlanet.biome, true);
+      const hRight = TerrainBuilder.getHeight(new THREE.Vector3().subVectors(pRight, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat), this.hoverPlanet.radius, this.hoverPlanet.biome, true);
       
       const wCenter = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().multiplyScalar(terrainHeight));
       const wForward = this.hoverPlanet.group.position.clone().add(new THREE.Vector3().subVectors(pForward, this.hoverPlanet.group.position).normalize().multiplyScalar(hForward));
@@ -632,58 +798,12 @@ export class Spaceship {
     
     // 2. Kill the speed or bounce back slightly
     if (this.mode === 'FLIGHT') {
-      // If you were flying fast, bounce back
-      this.speed = -this.speed * 0.5;
+      // Gentle bounce instead of violent ping-pong
+      this.speed = Math.max(0, -this.speed * 0.2);
     } else {
       // If hovering, just lose speed, don't violently bounce backwards
       this.speed *= 0.8;
     }
   }
 
-  takeDamage(newHp) {
-    this.hp = newHp;
-    
-    // Update UI
-    const hpText = document.getElementById('health-text');
-    const hpFill = document.getElementById('health-fill');
-    if (hpText) hpText.innerText = `HP: ${Math.max(0, this.hp)}`;
-    if (hpFill) {
-      hpFill.style.width = `${Math.max(0, this.hp)}%`;
-      if (this.hp <= 30) {
-        hpFill.style.backgroundColor = 'red';
-      } else if (this.hp <= 60) {
-        hpFill.style.backgroundColor = 'orange';
-      } else {
-        hpFill.style.backgroundColor = '#00ff88';
-      }
-    }
-    
-    // Flash red overlay
-    const overlay = document.getElementById('damage-overlay');
-    if (overlay) {
-      overlay.style.opacity = '1';
-      setTimeout(() => overlay.style.opacity = '0', 100);
-    }
-  }
-
-  die() {
-    this.isDead = true;
-    this.speed = 0;
-    this.mesh.visible = false;
-    
-    const deathScreen = document.getElementById('death-screen');
-    if (deathScreen) deathScreen.style.display = 'block';
-  }
-
-  respawn() {
-    this.isDead = false;
-    this.hp = 100;
-    this.speed = 0;
-    this.mesh.visible = true;
-    this.mesh.position.set(0, 0, 0);
-    this.takeDamage(100); // Reset UI
-    
-    const deathScreen = document.getElementById('death-screen');
-    if (deathScreen) deathScreen.style.display = 'none';
-  }
 }

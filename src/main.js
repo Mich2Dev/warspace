@@ -2,7 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { Spaceship } from './Spaceship.js';
 import { Planet } from './planet/Planet.js';
-import { TerrainBuilder } from './planet/TerrainBuilder.js';
+import { TerrainBuilder, globalTerrainUniforms } from './planet/TerrainBuilder.js';
 import { io } from 'socket.io-client';
 import { RemotePlayer } from './RemotePlayer.js';
 import { MobileController } from './MobileController.js';
@@ -11,6 +11,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { GalaxyBuilder } from './GalaxyBuilder.js';
+import { Skybox } from './Skybox.js';
 
 // Setup Keybindings Configuration
 const defaultKeys = {
@@ -32,9 +33,11 @@ window.GameConfig.keys = { ...defaultKeys, ...window.GameConfig.keys };
 
 // Setup basic scene
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050510);
-// No fog in deep space! (Otherwise you can't see the sun or planets)
+// No fog in deep space!
 scene.fog = null;
+
+// Add procedural galaxy background
+const skybox = new Skybox(scene);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500000000); // 500 million bounds
 const mapCamera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000000000); // 2 billion for galaxy map
@@ -46,18 +49,82 @@ mapCamera.lookAt(0, 0, 0);
 // Renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+// Cinematic Tone Mapping for glowing objects
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
 document.body.appendChild(renderer.domElement);
 
 // Post-Processing (Bloom for Stars, Engine, Lasers)
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-bloomPass.threshold = 0.5; // Solo objetos muy brillantes (sol, lasers, núcleo)
-bloomPass.strength = 1.2; // Intensidad del glow moderada
-bloomPass.radius = 0.5; // Radio del glow
+bloomPass.threshold = 0.2; // Low threshold so stars, engines, and the sun glow brilliantly
+bloomPass.strength = 1.2; // Dramatic bloom effect
+bloomPass.radius = 0.8; // Medium radius
 
 const composer = new EffectComposer(renderer);
 composer.addPass(renderScene);
 composer.addPass(bloomPass);
+
+// ==========================================
+// Spark Particle System for Collisions
+// ==========================================
+const activeSparks = [];
+
+// Create soft circular spark texture ONCE (caching to prevent massive lag)
+const sparkCanvas = document.createElement('canvas');
+sparkCanvas.width = 16; sparkCanvas.height = 16;
+const sparkCtx = sparkCanvas.getContext('2d');
+const sparkGrad = sparkCtx.createRadialGradient(8, 8, 0, 8, 8, 8);
+sparkGrad.addColorStop(0, 'rgba(255, 200, 50, 1)');
+sparkGrad.addColorStop(0.5, 'rgba(255, 100, 0, 0.8)');
+sparkGrad.addColorStop(1, 'rgba(255, 50, 0, 0)');
+sparkCtx.fillStyle = sparkGrad;
+sparkCtx.fillRect(0, 0, 16, 16);
+const globalSparkTexture = new THREE.CanvasTexture(sparkCanvas);
+
+let lastSparkTime = 0;
+
+window.createSparks = function(position, normal, intensity) {
+    // Add cooldown to prevent spawning 60 meshes per second if scraping
+    const now = Date.now();
+    if (now - lastSparkTime < 250) return; // Wait 250ms before creating more sparks
+    lastSparkTime = now;
+
+    const sparkCount = Math.floor(Math.min(intensity * 0.5, 100)); // Up to 100 sparks
+    if (sparkCount < 5) return;
+    
+    const geom = new THREE.BufferGeometry();
+    const pos = new Float32Array(sparkCount * 3);
+    const vels = [];
+    
+    for (let i = 0; i < sparkCount; i++) {
+        pos[i*3] = position.x;
+        pos[i*3+1] = position.y;
+        pos[i*3+2] = position.z;
+        
+        // Random velocity bursting mostly along the normal
+        const vx = normal.x * (100 + Math.random() * 200) + (Math.random() - 0.5) * 200;
+        const vy = normal.y * (100 + Math.random() * 200) + (Math.random() - 0.5) * 200;
+        const vz = normal.z * (100 + Math.random() * 200) + (Math.random() - 0.5) * 200;
+        vels.push(new THREE.Vector3(vx, vy, vz));
+    }
+    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    
+    const mat = new THREE.PointsMaterial({
+        color: 0xffffff,
+        size: 15.0, // Big glowing sparks
+        map: globalSparkTexture,
+        transparent: true,
+        opacity: 1.0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    
+    const mesh = new THREE.Points(geom, mat);
+    scene.add(mesh);
+    
+    activeSparks.push({ mesh, vels, life: 1.0 });
+};
 
 // OrbitControls para el mapa
 const mapControls = new OrbitControls(mapCamera, renderer.domElement);
@@ -102,23 +169,24 @@ renderer.setPixelRatio(window.devicePixelRatio);
 document.getElementById('app').appendChild(renderer.domElement);
 
 // Lighting (Realistic space lighting from the Sun)
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.4); // Brighter space ambient
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Aumentado para que el lado oscuro del planeta no sea negro intenso
 scene.add(ambientLight);
 
-const starlight = new THREE.HemisphereLight(0xffffff, 0x000033, 0.5); // Top is white starlight, bottom is dark void
+const starlight = new THREE.HemisphereLight(0xffffff, 0x000033, 0.3); // Bounce light from the cosmos
 scene.add(starlight);
 
-// Visual Sun at Center
-const sunGeo = new THREE.SphereGeometry(10000000, 64, 64);
-const sunMat = new THREE.MeshBasicMaterial({ color: 0xfff5e6 }); // Warm white, not pure white to prevent extreme bloom
+// Visual Sun at Center (Reducido para que no ocupe todo el cielo)
+const sunGeo = new THREE.SphereGeometry(2000000, 64, 64);
+// Injecting color values > 1.0 to trigger massive bloom (HDR rendering)
+const sunMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4.0, 3.5, 2.5) }); 
 const sunMesh = new THREE.Mesh(sunGeo, sunMat);
 scene.add(sunMesh); // Add to SCENE so it's always visible, not just in the map!
-const sunGlowMat = new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, depthWrite: false });
-const sunGlow = new THREE.Mesh(new THREE.SphereGeometry(11000000, 32, 32), sunGlowMat);
+const sunGlowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(4.0, 2.0, 0.0), transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false });
+const sunGlow = new THREE.Mesh(new THREE.SphereGeometry(2500000, 32, 32), sunGlowMat);
 scene.add(sunGlow);
 
 // Real Sun Light emitting from the center
-const sunLight = new THREE.PointLight(0xffffff, 2.0, 0); // distance 0 = infinite range
+const sunLight = new THREE.PointLight(0xffffff, 5.0, 0); // Intense sunlight
 scene.add(sunLight);
 
 // ==========================================
@@ -374,21 +442,21 @@ const spaceship = new Spaceship(scene, camera);
 // Iniciar Controles Móviles (Si está en celular)
 const mobileController = new MobileController(spaceship);
 // Spawn the spaceship near Earth's orbit (safe distance from the Sun)
-spaceship.mesh.position.set(30000000, 100000, 0);
+spaceship.mesh.position.set(60000000, 100000, 0);
 spaceship.mesh.lookAt(0, 0, 0);
 
 // Initialize Procedural Solar System (Hybrid Scale)
 const planets = [];
 
 const solarSystemData = [
-  { name: "Mercurio", radius: 7600 * 25, distance: 15000000, color: 0x888888, speed: 0.0008, inclination: 7.00, biome: 'Lava', desc: "Planeta rocoso. Es el más pequeño y cercano al Sol." },
-  { name: "Venus", radius: 19000 * 25, distance: 22500000, color: 0xe3bb76, speed: 0.0006, inclination: 3.39, biome: 'Toxic', desc: "Planeta rocoso. Atmósfera tóxica." },
-  { name: "Tierra", radius: 20000 * 25, distance: 30000000, color: 0x2b82c9, speed: 0.0005, inclination: 0.00, biome: 'Terran', moons: [{ name: "Luna", radius: 5500 * 25, dist: 1000000, speed: 0.005, color: 0x888888, biome: 'Desert' }], desc: "Planeta rocoso. Nuestro hogar." },
-  { name: "Marte", radius: 10600 * 25, distance: 40000000, color: 0xc1440e, speed: 0.0004, inclination: 1.85, biome: 'Desert', desc: "Planeta rocoso. El 'Planeta Rojo'." },
-  { name: "Júpiter", radius: 223000 * 25, distance: 60000000, color: 0xd39c7e, speed: 0.0002, inclination: 1.30, biome: 'GasGiant', moons: [{ name: "Europa", radius: 4800 * 25, dist: 1500000, speed: 0.008, color: 0xaaffff, biome: 'Ice' }], desc: "Gigante gaseoso." },
-  { name: "Saturno", radius: 188000 * 25, distance: 85000000, color: 0xead6b8, speed: 0.00015, inclination: 2.49, biome: 'GasGiant', hasRings: true, desc: "Gigante gaseoso. Sistema de anillos." },
-  { name: "Urano", radius: 80000 * 25, distance: 115000000, color: 0x4b70dd, speed: 0.0001, inclination: 0.77, biome: 'Ice', hasRings: true, desc: "Gigante helado." },
-  { name: "Neptuno", radius: 77000 * 25, distance: 150000000, color: 0x274687, speed: 0.00008, inclination: 1.77, biome: 'Ice', desc: "Gigante helado." }
+  { name: "Mercurio", radius: 7600 * 25, distance: 30000000, color: 0x888888, speed: 0.0008, inclination: 7.00, biome: 'Lava', desc: "Planeta rocoso. Es el más pequeño y cercano al Sol." },
+  { name: "Venus", radius: 19000 * 25, distance: 45000000, color: 0xe3bb76, speed: 0.0006, inclination: 3.39, biome: 'Toxic', desc: "Planeta rocoso. Atmósfera tóxica." },
+  { name: "Tierra", radius: 20000 * 25, distance: 60000000, color: 0x2b82c9, speed: 0.0005, inclination: 0.00, biome: 'Terran', moons: [{ name: "Luna", radius: 5500 * 25, dist: 1000000, speed: 0.005, color: 0x888888, biome: 'Desert' }], desc: "Planeta rocoso. Nuestro hogar." },
+  { name: "Marte", radius: 10600 * 25, distance: 80000000, color: 0xc1440e, speed: 0.0004, inclination: 1.85, biome: 'Desert', desc: "Planeta rocoso. El 'Planeta Rojo'." },
+  { name: "Júpiter", radius: 223000 * 25, distance: 120000000, color: 0xd39c7e, speed: 0.0002, inclination: 1.30, biome: 'GasGiant', moons: [{ name: "Europa", radius: 4800 * 25, dist: 1500000, speed: 0.008, color: 0xaaffff, biome: 'Ice' }], desc: "Gigante gaseoso." },
+  { name: "Saturno", radius: 188000 * 25, distance: 170000000, color: 0xead6b8, speed: 0.00015, inclination: 2.49, biome: 'GasGiant', hasRings: true, desc: "Gigante gaseoso. Sistema de anillos." },
+  { name: "Urano", radius: 80000 * 25, distance: 230000000, color: 0x4b70dd, speed: 0.0001, inclination: 0.77, biome: 'Ice', hasRings: true, desc: "Gigante helado." },
+  { name: "Neptuno", radius: 77000 * 25, distance: 300000000, color: 0x274687, speed: 0.00008, inclination: 1.77, biome: 'Ice', desc: "Gigante helado." }
 ];
 
 solarSystemData.forEach((data, index) => {
@@ -601,7 +669,7 @@ function createLaser(position, velocity, colorHex) {
   // 1. White hot inner core
   const coreGeo = new THREE.CylinderGeometry(80, 80, length, 8);
   coreGeo.rotateX(Math.PI / 2);
-  const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(5, 5, 5) }); // HDR White
   const coreMesh = new THREE.Mesh(coreGeo, coreMat);
   laserGroup.add(coreMesh);
 
@@ -609,9 +677,9 @@ function createLaser(position, velocity, colorHex) {
   const glowGeo = new THREE.CylinderGeometry(250, 250, length, 8);
   glowGeo.rotateX(Math.PI / 2);
   const glowMat = new THREE.MeshBasicMaterial({ 
-    color: colorHex, 
+    color: new THREE.Color(colorHex).multiplyScalar(4.0), // HDR Neon Color
     transparent: true, 
-    opacity: 0.7, 
+    opacity: 1.0, 
     blending: THREE.AdditiveBlending 
   });
   const glowMesh = new THREE.Mesh(glowGeo, glowMat);
@@ -916,6 +984,9 @@ function animate() {
 
   const delta = clock.getDelta();
   const time = clock.getElapsedTime();
+  
+  // Update Global Terrain Shader Time for procedural water and lava
+  globalTerrainUniforms.time.value = time;
 
   // Animate galaxy (always runs, invisible when not in map mode)
   galaxyBuilder.update(delta);
@@ -1068,6 +1139,8 @@ function animate() {
   // Planet Orbits & Physics
   // ==========================================
 
+  let shieldHeat = 0; // Accumulates heat if inside atmospheres
+
   for (const p of planets) {
     // 1. Update Orbit
     const oldPos = p.group.position.clone();
@@ -1137,9 +1210,9 @@ function animate() {
                             spaceship.mesh.position.add(normal.clone().multiplyScalar(penetrationDepth + 10));
                             
                             // 2. Physics Bounce
-                            const impactForce = Math.abs(spaceship.speed) * 1.5 + 200;
+                            const impactForce = Math.min(Math.abs(spaceship.speed) * 0.5 + 50, 400); // Heavy thump
                             spaceship.velocity.copy(normal.clone().multiplyScalar(impactForce));
-                            spaceship.speed = -Math.abs(spaceship.speed) * 0.5; // Reverse and damp speed
+                            spaceship.speed = Math.max(-200, -Math.abs(spaceship.speed) * 0.5); // Bounce back, don't stop dead entirely
                             
                             // 3. Visual Feedback (Zero Lag)
                             // Instead of creating a new WebGL Light (which causes lag), we flash the screen red via DOM
@@ -1158,6 +1231,8 @@ function animate() {
                             }
                             flash.style.opacity = '1';
                             setTimeout(() => { flash.style.opacity = '0'; }, 50);
+                            // 4. Spark Particle Effect
+                            window.createSparks(spaceship.mesh.position.clone().add(normal.clone().multiplyScalar(5)), normal, impactForce);
                             
                             // Break out after first collision to prevent multiple hits in one frame
                             break;
@@ -1179,14 +1254,134 @@ function animate() {
     if (distToPlanet < p.radius * 1.25) {
       const dirFromPlanet = new THREE.Vector3().subVectors(spaceship.mesh.position, p.group.position).normalize();
       
-      // Convert dirFromPlanet to planet's local space
-      const localDirFromPlanet = dirFromPlanet.clone().applyQuaternion(p.group.quaternion.clone().invert());
-      const actualTerrainHeight = TerrainBuilder.getHeight(localDirFromPlanet, p.radius, p.biome);
-
-      if (distToPlanet < actualTerrainHeight + 2) {
-        spaceship.handleCollision(dirFromPlanet, actualTerrainHeight + 2, p.group.position);
+      // AAA FIX: Use Raycaster to get the EXACT visual mesh height to prevent LOD clipping
+      const terrainRaycaster = new THREE.Raycaster();
+      const rayStart = spaceship.mesh.position.clone().add(dirFromPlanet.clone().multiplyScalar(10000));
+      const rayDown = dirFromPlanet.clone().negate();
+      terrainRaycaster.set(rayStart, rayDown);
+      
+      const intersects = terrainRaycaster.intersectObject(p.group, true).filter(hit => hit.object.isTerrainChunk);
+      
+      let actualTerrainHeight;
+      if (intersects.length > 0) {
+          actualTerrainHeight = intersects[0].point.distanceTo(p.group.position);
+      } else {
+          // Fallback to math height if raycast fails (e.g. ship is way out in space)
+          const localDirFromPlanet = dirFromPlanet.clone().applyQuaternion(p.group.quaternion.clone().invert());
+          actualTerrainHeight = TerrainBuilder.getHeight(localDirFromPlanet, p.radius, p.biome, true);
+      }
+      
+      if (distToPlanet < actualTerrainHeight + 25) {
+        const impactSpeed = spaceship.mode === 'FLIGHT' ? Math.abs(spaceship.speed) : 0;
+        
+        if (spaceship.mode === 'FLIGHT') {
+            // Smooth Repulsion (Anti-Jitter)
+            const overlap = (actualTerrainHeight + 25) - distToPlanet;
+            spaceship.mesh.position.add(dirFromPlanet.clone().multiplyScalar(overlap * 5.0 * delta));
+            
+            // Apply drag instead of violent bounce
+            spaceship.speed = Math.max(0, spaceship.speed * 0.9);
+            
+            // Apply sparks if crashing hard into the planet (No damage)
+            if (impactSpeed > 100) {
+                const impactForce = impactSpeed * 0.5;
+                if (window.createSparks) {
+                    window.createSparks(spaceship.mesh.position.clone().sub(dirFromPlanet.clone().multiplyScalar(2)), dirFromPlanet, impactForce);
+                }
+                spaceship.speed = 0; // stop hard crash
+            }
+        } else {
+            // HOVER MODE: Do not use a conflicting spring! Just hard-clamp if it falls below the visual mesh.
+            spaceship.mesh.position.copy(p.group.position).add(dirFromPlanet.multiplyScalar(actualTerrainHeight + 25));
+        }
       }
     }
+    
+    // FIX CAMERA CLIPPING (Evita ver a través del planeta)
+    const cameraDist = spaceship.camera.position.distanceTo(p.group.position);
+    if (cameraDist < p.radius * 1.25) {
+       const dirFromPlanetToCamera = new THREE.Vector3().subVectors(spaceship.camera.position, p.group.position).normalize();
+       
+       const camRayStart = spaceship.camera.position.clone().add(dirFromPlanetToCamera.clone().multiplyScalar(5000));
+       const camRayDown = dirFromPlanetToCamera.clone().negate();
+       const camRaycaster = new THREE.Raycaster(camRayStart, camRayDown);
+       const camIntersects = camRaycaster.intersectObject(p.group, true).filter(hit => hit.object.isTerrainChunk);
+       
+       let cameraTerrainHeight;
+       if (camIntersects.length > 0) {
+           cameraTerrainHeight = camIntersects[0].point.distanceTo(p.group.position);
+       } else {
+           const localCameraDir = dirFromPlanetToCamera.clone().applyQuaternion(p.group.quaternion.clone().invert());
+           cameraTerrainHeight = TerrainBuilder.getHeight(localCameraDir, p.radius, p.biome, true);
+       }
+       
+       if (cameraDist < cameraTerrainHeight + 25) {
+           // AAA Fix: Hard clamp the camera so it is physically impossible to see under the terrain
+           const localCameraDir = dirFromPlanetToCamera.clone().applyQuaternion(p.group.quaternion.clone().invert());
+           const safePosition = p.group.position.clone().add(dirFromPlanetToCamera.clone().multiplyScalar(cameraTerrainHeight + 25));
+           spaceship.camera.position.copy(safePosition);
+       }
+    }
+    
+    // 4. Atmospheric Re-entry Friction
+    const atmosphereLimit = p.radius * 1.15; // Tight atmosphere to prevent triggering while inside rings (1.3+)
+    if (distToPlanet < atmosphereLimit && distToPlanet > p.radius) {
+        // Depth is 0 at edge of atmosphere, 1 at the ground
+        const depth = 1.0 - ((distToPlanet - p.radius) / (atmosphereLimit - p.radius));
+        // Make plasma peak in the upper-mid atmosphere and fade near the ground
+        const plasmaFactor = Math.sin(depth * Math.PI); 
+        const speedRatio = Math.abs(spaceship.speed) / 30000.0; // Velocidad AAA: Solo te incendias si superas los 30,000 (Caída orbital real)
+        if (speedRatio > 0.3 && plasmaFactor > 0) {
+            const heat = (speedRatio - 0.3) * plasmaFactor * 3.0;
+            if (heat > shieldHeat) shieldHeat = heat;
+        }
+    }
+  }
+  
+  // Apply Re-entry Shield visual effect and camera shake
+  if (spaceship.shieldUniforms) {
+      spaceship.shieldUniforms.intensity.value = THREE.MathUtils.lerp(
+          spaceship.shieldUniforms.intensity.value, 
+          Math.min(shieldHeat, 2.0), 
+          0.1
+      );
+      
+      const currentHeat = spaceship.shieldUniforms.intensity.value;
+      if (currentHeat > 0.05) {
+          spaceship.plasmaShield.visible = true;
+          // Camera shake removed based on user feedback
+      } else {
+          spaceship.plasmaShield.visible = false;
+      }
+  }
+  
+  // Update Galaxy Skybox
+  skybox.update(universalTime);
+  
+  // Update Sparks
+  for (let i = activeSparks.length - 1; i >= 0; i--) {
+      const sparkObj = activeSparks[i];
+      sparkObj.life -= delta * 1.5; // Sparks live for about 0.6 seconds
+      
+      if (sparkObj.life <= 0) {
+          scene.remove(sparkObj.mesh);
+          sparkObj.mesh.geometry.dispose();
+          sparkObj.mesh.material.dispose();
+          // NO NOT dispose globalSparkTexture
+          activeSparks.splice(i, 1);
+      } else {
+          const positions = sparkObj.mesh.geometry.attributes.position.array;
+          for (let p = 0; p < sparkObj.vels.length; p++) {
+              positions[p*3] += sparkObj.vels[p].x * delta;
+              positions[p*3+1] += sparkObj.vels[p].y * delta;
+              positions[p*3+2] += sparkObj.vels[p].z * delta;
+              
+              // Drag
+              sparkObj.vels[p].multiplyScalar(0.95);
+          }
+          sparkObj.mesh.geometry.attributes.position.needsUpdate = true;
+          sparkObj.mesh.material.opacity = sparkObj.life;
+      }
   }
 
   // Update Space Dust endless wrapping field

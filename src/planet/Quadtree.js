@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TerrainBuilder } from './TerrainBuilder.js';
 
-const MAX_DEPTH = 8; // Increased depth for AAA planetary detail
+const MAX_DEPTH = 8; // Increased to 8 for AAA level detail up close
 
 export class Quadtree {
   constructor(group, localUp, radius, color, biome = 'Terran', depth = 0, center = new THREE.Vector2(0,0), size = 2) {
@@ -40,6 +40,7 @@ export class Quadtree {
   
   buildMesh() {
     this.mesh = TerrainBuilder.buildChunk(this.localUp, this.axisA, this.axisB, this.radius, this.center, this.size, this.color, this.biome);
+    this.mesh.isTerrainChunk = true; // Tag for raycast filtering
     this.group.add(this.mesh);
   }
   
@@ -59,7 +60,13 @@ export class Quadtree {
     
     // Distance thresholds (heuristic: split if distance < size of node in world space * factor)
     const worldSize = this.size * this.radius; // rough approx
-    const splitThreshold = worldSize * 1.5; 
+    
+    // Tighter thresholds for deep LODs to prevent lag while keeping high detail near the camera
+    let splitFactor = 1.5;
+    if (this.depth > 4) splitFactor = 1.2;
+    if (this.depth > 6) splitFactor = 1.0;
+    
+    const splitThreshold = worldSize * splitFactor;
     
     if (this.isLeaf && this.depth < MAX_DEPTH && distance < splitThreshold) {
       this.split();

@@ -41,13 +41,37 @@ export class Planet {
     // Create Atmosphere
     const atmoGeometry = new THREE.SphereGeometry(this.radius * 1.05, 64, 64);
     
-    // Add glowing atmosphere effect
-    const atmoMaterial = new THREE.MeshStandardMaterial({
-      color: this.color,
-      transparent: true,
-      opacity: 0.15,
+    // Advanced Procedural Atmospheric Fresnel Shader
+    const vertexShader = `
+      varying vec3 vNormal;
+      void main() {
+        // Calculate normal in view space
+        vNormal = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const fragmentShader = `
+      uniform vec3 color;
+      varying vec3 vNormal;
+      void main() {
+        // View direction in view space is always (0,0,1)
+        float dotNV = max(0.0, dot(vNormal, vec3(0.0, 0.0, 1.0)));
+        // Fresnel effect: transparent in center, glowing on edges
+        float intensity = pow(1.0 - dotNV, 3.5) * 1.2;
+        gl_FragColor = vec4(color, intensity);
+      }
+    `;
+
+    const atmoMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        color: { value: new THREE.Color(this.color).multiplyScalar(1.5) } // Boosted brightness
+      },
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
       blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide, // FrontSide for external atmospheric glow
+      transparent: true,
       depthWrite: false
     });
     this.atmosphere = new THREE.Mesh(atmoGeometry, atmoMaterial);

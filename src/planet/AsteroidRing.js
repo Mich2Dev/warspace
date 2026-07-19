@@ -109,8 +109,8 @@ export class AsteroidRing {
         const dustPositions = new Float32Array(numDustParticles * 3);
         const dustColors = new Float32Array(numDustParticles * 3);
         
-        const innerColor = new THREE.Color(0x665544); // Rocky dust
-        const outerColor = new THREE.Color(0x99aadd); // Icy dust
+        const innerColor = new THREE.Color(0x221a11); // Dark rocky dust
+        const outerColor = new THREE.Color(0x334455); // Dark icy dust
         const tempColor = new THREE.Color();
         
         let pIdx = 0;
@@ -166,13 +166,13 @@ export class AsteroidRing {
         const ptTex = new THREE.CanvasTexture(canvas);
         
         const dustMat = new THREE.PointsMaterial({
-            size: radius * 0.015, // Scale particles relative to planet
+            size: radius * 0.08, // Huge particles to create smooth overlapping fog
             map: ptTex,
             vertexColors: true,
             transparent: true,
-            opacity: 0.15, // Very soft
+            opacity: 0.01, // Extremely soft, almost invisible individually
             depthWrite: false,
-            blending: THREE.NormalBlending
+            blending: THREE.AdditiveBlending // Blends to create bright areas only where dense
         });
         
         const dustMesh = new THREE.Points(dustGeom, dustMat);
