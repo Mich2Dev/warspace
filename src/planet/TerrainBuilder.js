@@ -13,6 +13,7 @@ function mulberry32(a) {
     }
 }
 const noise3D = createNoise3D(mulberry32(123456789)); // Semilla global fija
+export function getNoise(x, y, z) { return noise3D(x, y, z); }
 const RESOLUTION = 32; // Lowered from 48 to fix lag while preserving smooth terrain via normals
 
 export class TerrainBuilder {
@@ -128,9 +129,9 @@ export class TerrainBuilder {
       side: THREE.DoubleSide // AAA FIX: Prevents seeing through the planet if the camera clips
     });
     
-    // AAA FIX: Prevent Three.js from caching and sharing shaders across different biomes!
+    // Must change when onBeforeCompile GLSL changes, or WebGL keeps a broken/stale program
     material.customProgramCacheKey = function() {
-        return biome;
+        return biome + '_terrain_v1';
     };
     
     // Inject custom GLSL to generate procedural textures (Micro-details & Strata)
@@ -208,15 +209,36 @@ export class TerrainBuilder {
          '#include <normal_fragment_begin>',
          `#include <normal_fragment_begin>
           int _biomeType = ${(biome === 'Lava') ? 1 : (biome === 'GasGiant') ? 2 : (biome === 'Terran') ? 3 : (biome === 'Ice') ? 4 : 5};
-          if (_biomeType == 3 && vHeightOffset <= -28.0) {
-              // Dynamic Normal Perturbation for AAA liquid reflections
-              float eps = 2.0;
-              float n0 = fbm(vLocalPos * 0.005 - time * 0.5);
-              float nx = fbm((vLocalPos + vec3(eps, 0.0, 0.0)) * 0.005 - time * 0.5);
-              float nz = fbm((vLocalPos + vec3(0.0, 0.0, eps)) * 0.005 - time * 0.5);
-              
-              vec3 waveNormal = vec3(nx - n0, 0.0, nz - n0);
-              normal = normalize(normal - waveNormal * 1.5);
+          if (_biomeType == 3) {
+              if (vHeightOffset <= -28.0) {
+                  // Dynamic Normal Perturbation for AAA liquid reflections
+                  float eps = 2.0;
+                  float n0 = fbm(vLocalPos * 0.005 - time * 0.5);
+                  float nx = fbm((vLocalPos + vec3(eps, 0.0, 0.0)) * 0.005 - time * 0.5);
+                  float nz = fbm((vLocalPos + vec3(0.0, 0.0, eps)) * 0.005 - time * 0.5);
+                  
+                  vec3 waveNormal = vec3(nx - n0, 0.0, nz - n0);
+                  normal = normalize(normal - waveNormal * 1.5);
+              } else {
+                  // PROCEDURAL BUMP MAPPING (Tierra, Roca, Nieve)
+                  // Usamos ruido de muy alta frecuencia para simular porosidad y grietas.
+                  float eps = 1.0;
+                  
+                  // FBM era demasiado pesado (4 capas x 4 veces = 16 ruidos por pixel).
+                  // OPTIMIZADO: vnoise (1 capa) reduce el GPU lag un 400% manteniendo el mismo look granular.
+                  float n0 = vnoise(vLocalPos * 0.08); 
+                  float nx = vnoise((vLocalPos + vec3(eps, 0.0, 0.0)) * 0.08);
+                  float ny = vnoise((vLocalPos + vec3(0.0, eps, 0.0)) * 0.08);
+                  float nz = vnoise((vLocalPos + vec3(0.0, 0.0, eps)) * 0.08);
+                  
+                  vec3 bumpNormal = vec3(nx - n0, ny - n0, nz - n0);
+                  
+                  // Para evitar el costo de matrices TBN, inyectamos el ruido caótico directamente en la normal
+                  // Al ser ruido de alta frecuencia, la dependencia de la vista actúa como destellos especulares (shimmer)
+                  // muy realistas para rocas minerales y nieve.
+                  // Escala del relieve: 2.5
+                  normal = normalize(normal - bumpNormal * 2.5);
+              }
           }
          `
        );
@@ -236,15 +258,50 @@ export class TerrainBuilder {
              float n3 = vnoise(vLocalPos * 0.01);   // Fine details
              float grit = 0.6 + (n1 * 0.3) + (n2 * 0.2);
              
-             // --- PROCEDURAL GRASS & DIRT (TERRAN) ---
+             // --- PROCEDURAL GRASS, DIRT & ROCK (TERRAN) ---
              if (biomeType == 3 && vHeightOffset > -28.0 && vHeightOffset < 12000.0) {
-                 // Mix dirt and grass based on noise
-                 vec3 grassColor = vec3(0.1, 0.4, 0.1);
-                 vec3 dirtColor = vec3(0.3, 0.2, 0.1);
-                 float grassMix = smoothstep(0.3, 0.7, n2 + n3 * 0.5);
-                 vec3 proceduralTex = mix(dirtColor, grassColor, grassMix);
-                 // Blend procedural texture with vertex color
-                 diffuseColor.rgb = mix(diffuseColor.rgb, proceduralTex * grit * 1.5, 0.6);
+                 // Orillas húmedas cerca de las lagunas (-28.0 a -20.0)
+                 float wetShore = 1.0 - smoothstep(-28.0, -20.0, vHeightOffset);
+                 
+                 // 1. Calcular Inclinación (Slope) usando derivadas espaciales
+                 vec3 localUp = normalize(vLocalPos);
+                 vec3 localNormal = normalize(cross(dFdx(vLocalPos), dFdy(vLocalPos)));
+                 float slope = abs(dot(localNormal, localUp)); // 1.0 = Plano, 0.0 = Pared vertical
+                 
+                 // 2. Colores base fotorealistas con micro-textura (grit)
+                 // OPTIMIZADO: Usamos vnoise en lugar de fbm para salvar rendimiento GPU
+                 float microNoise = vnoise(vLocalPos * 0.1) * 0.2; 
+                 
+                 vec3 grassColor = mix(vec3(0.06, 0.16, 0.07), vec3(0.04, 0.10, 0.05), wetShore);
+                 grassColor += microNoise * vec3(0.02, 0.04, 0.01); // Variaciones orgánicas
+                 
+                 vec3 dirtColor = mix(vec3(0.18, 0.14, 0.10), vec3(0.08, 0.06, 0.04), wetShore);
+                 dirtColor += microNoise * 0.3; // Tierra granular
+                 
+                 vec3 cliffColor = vec3(0.15, 0.14, 0.13) + microNoise * 0.6; // Roca con manchas
+                 vec3 snowColor = vec3(0.85, 0.88, 0.92) + microNoise * 0.2; // Nieve cristalina
+                 
+                 // 3. Distribución orgánica de Tierra y Pasto en zonas planas
+                 float grassMix = smoothstep(0.2, 0.7, n2 + n3 * 0.5); 
+                 grassMix = mix(grassMix, grassMix * 0.4, wetShore * 0.8); // Más lodo en la orilla
+                 vec3 flatTerrain = mix(dirtColor, grassColor, grassMix);
+                 
+                 // 4. Acantilados (Rock on steep slopes)
+                 // Si slope < 0.8 (aprox 36 grados), empieza a ser roca
+                 float rockBlend = smoothstep(0.75, 0.9, slope); 
+                 
+                 // En las orillas húmedas no hay roca escarpada, todo es barro
+                 rockBlend = mix(1.0, rockBlend, 1.0 - wetShore);
+                 
+                 vec3 terrainMix = mix(cliffColor, flatTerrain, rockBlend);
+                 
+                 // 5. Nieve en altas cumbres (> 6000m)
+                 float snowLine = smoothstep(6000.0, 9000.0, vHeightOffset + (n1 * 1000.0)); // Nieve con borde irregular
+                 terrainMix = mix(terrainMix, snowColor, snowLine);
+                 
+                 // Blend final procedural texture with vertex color (vertex color gives global valley/mountain shading)
+                 diffuseColor.rgb = mix(diffuseColor.rgb, terrainMix * grit * 1.5, 0.85);
+                 
              } else if (biomeType == 4) { // ICE ONLY
                   diffuseColor.rgb *= grit; // Base snow/ice grit
                   
@@ -330,8 +387,21 @@ export class TerrainBuilder {
       shader.fragmentShader = shader.fragmentShader.replace(
          '#include <roughnessmap_fragment>',
          `#include <roughnessmap_fragment>
-          if (biomeType == 3 && vHeightOffset <= -28.0) {
-              roughnessFactor = 0.05;
+          if (biomeType == 3) {
+              if (vHeightOffset <= -28.0) {
+                  roughnessFactor = 0.05; // Agua hiper-reflectante
+              } else {
+                  // Dinámica de rugosidad para tierra
+                  float wetShore = 1.0 - smoothstep(-28.0, -20.0, vHeightOffset);
+                  
+                  // La nieve en lo alto también tiene cierto brillo (hielo cristalino)
+                  float n1 = vnoise(vLocalPos * 0.0002);
+                  float snowLine = smoothstep(6000.0, 9000.0, vHeightOffset + (n1 * 1000.0));
+                  
+                  // Roca/tierra es mate (0.95). El lodo mojado refleja un poco (0.4). La nieve brilla suavemente (0.6).
+                  float baseRough = mix(0.95, 0.4, wetShore);
+                  roughnessFactor = mix(baseRough, 0.6, snowLine);
+              }
           }
          `
        );

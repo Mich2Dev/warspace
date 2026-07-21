@@ -107,8 +107,19 @@ export class Skybox {
         
         starGroup.renderOrder = -100;
         this.scene.add(starGroup);
+        return starGroup;
     }
     
+    setOpacity(opacity) {
+        if (!this.mesh) return;
+        this.mesh.children.forEach(child => {
+            if (child.material) {
+                child.material.opacity = opacity;
+                child.material.transparent = true;
+            }
+        });
+    }
+
     update(time) {
         // Points don't need update unless we want them to twinkle, which is expensive on CPU.
         // For realistic space, stars don't twinkle when viewed from outside an atmosphere!

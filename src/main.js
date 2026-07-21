@@ -57,9 +57,9 @@ document.body.appendChild(renderer.domElement);
 // Post-Processing (Bloom for Stars, Engine, Lasers)
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-bloomPass.threshold = 0.2; // Low threshold so stars, engines, and the sun glow brilliantly
-bloomPass.strength = 1.2; // Dramatic bloom effect
-bloomPass.radius = 0.8; // Medium radius
+bloomPass.threshold = 0.35;
+bloomPass.strength = 0.85; // Lower bloom cost for fluidity near Earth
+bloomPass.radius = 0.6;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(renderScene);
@@ -197,26 +197,63 @@ const remotePlayers = {};
 let isLoggedIn = false;
 
 // ==========================================
-// LOGIN LOGIC
+// LOGIN LOGIC (auto-relogin for fast iteration)
 // ==========================================
-document.getElementById('btn-login').addEventListener('click', () => {
-  const user = document.getElementById('login-username').value.trim();
-  const pass = document.getElementById('login-password').value.trim();
+const LOGIN_SAVE_KEY = 'jg_saved_login';
+let loginInFlight = false;
+
+function doLogin(user, pass) {
+  if (loginInFlight || isLoggedIn) return;
   const errorEl = document.getElementById('login-error');
-  
   if (user.length < 3 || pass.length < 3) {
     errorEl.style.display = 'block';
     errorEl.innerText = "Usuario y contraseña deben tener al menos 3 caracteres.";
     return;
   }
-  
+  loginInFlight = true;
   errorEl.style.display = 'block';
   errorEl.innerText = "Conectando al servidor...";
   socket.emit('login', { username: user, password: pass });
+}
+
+// Prefill + auto-login after full page reload / HMR reconnect
+try {
+  const saved = JSON.parse(localStorage.getItem(LOGIN_SAVE_KEY) || 'null');
+  if (saved?.username && saved?.password) {
+    document.getElementById('login-username').value = saved.username;
+    document.getElementById('login-password').value = saved.password;
+  }
+} catch (_) {}
+
+document.getElementById('btn-login').addEventListener('click', () => {
+  const user = document.getElementById('login-username').value.trim();
+  const pass = document.getElementById('login-password').value.trim();
+  doLogin(user, pass);
+});
+
+// Enter key submits login
+document.getElementById('login-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btn-login').click();
+});
+
+socket.on('connect', () => {
+  if (isLoggedIn) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOGIN_SAVE_KEY) || 'null');
+    if (saved?.username && saved?.password) {
+      doLogin(saved.username, saved.password);
+    }
+  } catch (_) {}
 });
 
 socket.on('login_success', (playerData) => {
   isLoggedIn = true;
+  loginInFlight = false;
+  const user = document.getElementById('login-username').value.trim();
+  const pass = document.getElementById('login-password').value.trim();
+  if (user && pass) {
+    localStorage.setItem(LOGIN_SAVE_KEY, JSON.stringify({ username: user, password: pass }));
+  }
   document.getElementById('login-screen').style.display = 'none';
   document.querySelector('.ui').style.display = 'block';
   
@@ -276,10 +313,18 @@ socket.on('login_success', (playerData) => {
   document.body.requestPointerLock();
 });
 
-socket.on('login_error', (msg) => {
+socket.on('login_failed', (data) => {
+  loginInFlight = false;
   const errorEl = document.getElementById('login-error');
   errorEl.style.display = 'block';
-  errorEl.innerText = msg;
+  errorEl.innerText = data?.message || 'Error de login';
+});
+
+socket.on('login_error', (msg) => {
+  loginInFlight = false;
+  const errorEl = document.getElementById('login-error');
+  errorEl.style.display = 'block';
+  errorEl.innerText = typeof msg === 'string' ? msg : (msg?.message || 'Error');
 });
 
 
@@ -528,6 +573,13 @@ for (const p of planets) {
 
 let targetPlanet = null;
 const raycaster = new THREE.Raycaster();
+// Reused for planet collision / camera clamp (creating Raycaster every frame was lagging hard)
+const terrainRaycaster = new THREE.Raycaster();
+const camTerrainRaycaster = new THREE.Raycaster();
+const _rayStart = new THREE.Vector3();
+const _rayDir = new THREE.Vector3();
+const _localDir = new THREE.Vector3();
+const _quatInv = new THREE.Quaternion();
 const pointer = new THREE.Vector2();
 
 // Selection ring for map mode
@@ -1249,75 +1301,67 @@ function animate() {
       spaceship.camera.position.add(deltaPos); // Prevent camera lagging behind the moving ship
     }
 
-    // 3. Collision Detection (Mountains can be up to 15% of radius)
+    // 3. Collision Detection — prefer cheap math; raycast only when very close to surface
     const distToPlanet = spaceship.mesh.position.distanceTo(p.group.position);
     if (distToPlanet < p.radius * 1.25) {
       const dirFromPlanet = new THREE.Vector3().subVectors(spaceship.mesh.position, p.group.position).normalize();
-      
-      // AAA FIX: Use Raycaster to get the EXACT visual mesh height to prevent LOD clipping
-      const terrainRaycaster = new THREE.Raycaster();
-      const rayStart = spaceship.mesh.position.clone().add(dirFromPlanet.clone().multiplyScalar(10000));
-      const rayDown = dirFromPlanet.clone().negate();
-      terrainRaycaster.set(rayStart, rayDown);
-      
-      const intersects = terrainRaycaster.intersectObject(p.group, true).filter(hit => hit.object.isTerrainChunk);
-      
-      let actualTerrainHeight;
-      if (intersects.length > 0) {
-          actualTerrainHeight = intersects[0].point.distanceTo(p.group.position);
-      } else {
-          // Fallback to math height if raycast fails (e.g. ship is way out in space)
-          const localDirFromPlanet = dirFromPlanet.clone().applyQuaternion(p.group.quaternion.clone().invert());
-          actualTerrainHeight = TerrainBuilder.getHeight(localDirFromPlanet, p.radius, p.biome, true);
+      _quatInv.copy(p.group.quaternion).invert();
+      _localDir.copy(dirFromPlanet).applyQuaternion(_quatInv);
+
+      let actualTerrainHeight = TerrainBuilder.getHeight(_localDir, p.radius, p.biome, true);
+      const approxAlt = distToPlanet - actualTerrainHeight;
+
+      // Full mesh raycast only in the last ~800u (trees no longer participate — raycast disabled)
+      if (approxAlt < 800) {
+        _rayStart.copy(spaceship.mesh.position).addScaledVector(dirFromPlanet, 5000);
+        _rayDir.copy(dirFromPlanet).negate();
+        terrainRaycaster.set(_rayStart, _rayDir);
+        const intersects = terrainRaycaster.intersectObject(p.group, true);
+        for (let hi = 0; hi < intersects.length; hi++) {
+          if (intersects[hi].object.isTerrainChunk) {
+            actualTerrainHeight = intersects[hi].point.distanceTo(p.group.position);
+            break;
+          }
+        }
       }
       
       if (distToPlanet < actualTerrainHeight + 25) {
-        const impactSpeed = spaceship.mode === 'FLIGHT' ? Math.abs(spaceship.speed) : 0;
-        
         if (spaceship.mode === 'FLIGHT') {
-            // Smooth Repulsion (Anti-Jitter)
             const overlap = (actualTerrainHeight + 25) - distToPlanet;
             spaceship.mesh.position.add(dirFromPlanet.clone().multiplyScalar(overlap * 5.0 * delta));
             
-            // Apply drag instead of violent bounce
-            spaceship.speed = Math.max(0, spaceship.speed * 0.9);
-            
-            // Apply sparks if crashing hard into the planet (No damage)
-            if (impactSpeed > 100) {
-                const impactForce = impactSpeed * 0.5;
-                if (window.createSparks) {
-                    window.createSparks(spaceship.mesh.position.clone().sub(dirFromPlanet.clone().multiplyScalar(2)), dirFromPlanet, impactForce);
-                }
-                spaceship.speed = 0; // stop hard crash
-            }
+            // Freno suave sin rebote
+            spaceship.speed = Math.max(0, spaceship.speed * 0.5); 
         } else {
-            // HOVER MODE: Do not use a conflicting spring! Just hard-clamp if it falls below the visual mesh.
             spaceship.mesh.position.copy(p.group.position).add(dirFromPlanet.multiplyScalar(actualTerrainHeight + 25));
         }
       }
     }
     
-    // FIX CAMERA CLIPPING (Evita ver a través del planeta)
+    // FIX CAMERA CLIPPING
     const cameraDist = spaceship.camera.position.distanceTo(p.group.position);
     if (cameraDist < p.radius * 1.25) {
        const dirFromPlanetToCamera = new THREE.Vector3().subVectors(spaceship.camera.position, p.group.position).normalize();
-       
-       const camRayStart = spaceship.camera.position.clone().add(dirFromPlanetToCamera.clone().multiplyScalar(5000));
-       const camRayDown = dirFromPlanetToCamera.clone().negate();
-       const camRaycaster = new THREE.Raycaster(camRayStart, camRayDown);
-       const camIntersects = camRaycaster.intersectObject(p.group, true).filter(hit => hit.object.isTerrainChunk);
-       
-       let cameraTerrainHeight;
-       if (camIntersects.length > 0) {
-           cameraTerrainHeight = camIntersects[0].point.distanceTo(p.group.position);
-       } else {
-           const localCameraDir = dirFromPlanetToCamera.clone().applyQuaternion(p.group.quaternion.clone().invert());
-           cameraTerrainHeight = TerrainBuilder.getHeight(localCameraDir, p.radius, p.biome, true);
+       _quatInv.copy(p.group.quaternion).invert();
+       _localDir.copy(dirFromPlanetToCamera).applyQuaternion(_quatInv);
+
+       let cameraTerrainHeight = TerrainBuilder.getHeight(_localDir, p.radius, p.biome, true);
+       const camApproxAlt = cameraDist - cameraTerrainHeight;
+
+       if (camApproxAlt < 800) {
+         _rayStart.copy(spaceship.camera.position).addScaledVector(dirFromPlanetToCamera, 5000);
+         _rayDir.copy(dirFromPlanetToCamera).negate();
+         camTerrainRaycaster.set(_rayStart, _rayDir);
+         const camIntersects = camTerrainRaycaster.intersectObject(p.group, true);
+         for (let hi = 0; hi < camIntersects.length; hi++) {
+           if (camIntersects[hi].object.isTerrainChunk) {
+             cameraTerrainHeight = camIntersects[hi].point.distanceTo(p.group.position);
+             break;
+           }
+         }
        }
        
        if (cameraDist < cameraTerrainHeight + 25) {
-           // AAA Fix: Hard clamp the camera so it is physically impossible to see under the terrain
-           const localCameraDir = dirFromPlanetToCamera.clone().applyQuaternion(p.group.quaternion.clone().invert());
            const safePosition = p.group.position.clone().add(dirFromPlanetToCamera.clone().multiplyScalar(cameraTerrainHeight + 25));
            spaceship.camera.position.copy(safePosition);
        }
@@ -1414,13 +1458,55 @@ function animate() {
   if (!isMapMode) {
     shipMarker.visible = false;
     
-    // Update planet quadtree LOD based on camera position
+    // Update planet quadtree LOD and Atmosphere based on camera position
+    let closestPlanet = null;
+    let minDist = Infinity;
+    
     for (const p of planets) {
       p.update(camera.position);
+      const d = camera.position.distanceTo(p.group.position);
+      if (d < minDist) {
+          minDist = d;
+          closestPlanet = p;
+      }
     }
     
-    // Fog removed per user request (pure realism, no screen-space effects)
-    scene.fog = null;
+    // Dynamic Volumetric Atmosphere
+    if (closestPlanet) {
+        const alt = minDist - closestPlanet.radius;
+        const atmLimit = closestPlanet.radius * 0.15; // 15% del radio es la altura atmosférica
+        
+        if (alt < atmLimit) {
+            // Factor de fusión: 0 = espacio profundo, 1 = suelo
+            const blend = THREE.MathUtils.clamp(1.0 - Math.max(0, alt) / atmLimit, 0.0, 1.0);
+            
+            // Calculamos color del cielo. Más suave y luminoso en la superficie.
+            const fogColor = new THREE.Color(closestPlanet.color).multiplyScalar(0.7);
+            if (closestPlanet.biome === 'Terran') {
+                fogColor.setHex(0x55aaff); // Cielo azul clásico para la tierra
+            }
+            
+            // Transición de niebla: en el espacio está muy lejos, en el suelo cubre a partir de 1km hasta 70km
+            const fogNear = THREE.MathUtils.lerp(closestPlanet.radius, 1000, blend);
+            const fogFar = THREE.MathUtils.lerp(closestPlanet.radius * 2, 70000, blend); // 70km: opaco antes de que termine el pasto (80km)
+            
+            scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
+            scene.background = fogColor.clone().multiplyScalar(blend); // El fondo se vuelve el cielo
+            
+            if (skybox) {
+                skybox.setOpacity(1.0 - blend); // Desvanecer estrellas
+            }
+        } else {
+            scene.fog = null;
+            scene.background = new THREE.Color(0x000000);
+            if (skybox) {
+                skybox.setOpacity(1.0);
+            }
+        }
+    } else {
+        scene.fog = null;
+        scene.background = new THREE.Color(0x000000);
+    }
 
     renderScene.camera = camera;
     composer.render();

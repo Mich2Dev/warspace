@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Quadtree } from './Quadtree.js';
 import { PlanetDecorator } from './PlanetDecorator.js';
 import { AsteroidRing } from './AsteroidRing.js';
+import { GrassManager } from './GrassManager.js';
 
 export class Planet {
   constructor(scene, radius, position = new THREE.Vector3(0,0,0), color = 0x339944, biome = 'Terran', hasRings = false) {
@@ -36,6 +37,16 @@ export class Planet {
     if (hasRings) {
         this.rings = AsteroidRing.createRingSystem(this.radius);
         this.group.add(this.rings);
+    }
+
+    // 3D grass ON TOP of Terran floor (Earth only) — never block planet if grass fails
+    if (this.biome === 'Terran') {
+        try {
+            this.grassManager = new GrassManager(this.group, this.radius);
+        } catch (err) {
+            console.warn('[Planet] GrassManager failed, terrain still loads:', err);
+            this.grassManager = null;
+        }
     }
 
     // Create Atmosphere
@@ -81,6 +92,9 @@ export class Planet {
   update(cameraPosition) {
     for (const qt of this.quadtrees) {
       qt.update(cameraPosition);
+    }
+    if (this.grassManager) {
+      this.grassManager.update(cameraPosition);
     }
   }
 }

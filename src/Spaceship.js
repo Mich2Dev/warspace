@@ -29,7 +29,7 @@ export class Spaceship {
       // AJUSTA EL TAMAÑO DE TU NAVE AQUÍ:
       // Si la nave se ve muy pequeña, cambia estos 1 por números más altos (ej. 5, 5, 5)
       // Si se ve muy grande, cámbialos por números más bajos (ej. 0.2, 0.2, 0.2)
-      model.scale.set(2.5, 2.5, 2.5); 
+      model.scale.set(5.0, 5.0, 5.0); 
       // model.rotation.y = Math.PI; // Adjust if the model is backwards
       this.mesh.add(model);
     });
@@ -192,9 +192,9 @@ export class Spaceship {
     // We attach a dummy object for the camera to follow
     this.cameraBoom = new THREE.Object3D();
     this.mesh.add(this.cameraBoom);
-    // Since ship is 32 units long, camera must be pushed back!
-    this.cameraDistance = 45;
-    this.cameraBoom.position.set(0, 10, this.cameraDistance); // Third person view
+    // Since ship is scaled up, camera must be pushed back!
+    this.cameraDistance = 90;
+    this.cameraBoom.position.set(0, 25, this.cameraDistance); // Third person view
     
     // Mouse input accumulators
     this.pitchAccumulator = 0;
@@ -231,10 +231,10 @@ export class Spaceship {
   }
 
   onScroll(deltaY) {
-    // Zoom sensitivity
-    this.cameraDistance += deltaY * 0.02;
-    // Limit how close or far the camera can go
-    this.cameraDistance = Math.max(5, Math.min(this.cameraDistance, 100));
+    // Zoom sensitivity (much faster now)
+    this.cameraDistance += deltaY * 0.15;
+    // Limit how close or far the camera can go (Allow extreme zoom out up to 3000)
+    this.cameraDistance = Math.max(10, Math.min(this.cameraDistance, 3000));
     // Update the boom position (keeping the height offset roughly proportional or static)
     this.cameraBoom.position.z = this.cameraDistance;
     this.cameraBoom.position.y = this.cameraDistance * 0.25; 
@@ -733,9 +733,6 @@ export class Spaceship {
     const pCenter = this.mesh.position.clone();
     const toCore = new THREE.Vector3().subVectors(pCenter, this.hoverPlanet.group.position).normalize();
     
-    // Gentle Gravity Pull
-    this.mesh.position.add(toCore.clone().multiplyScalar(-600 * delta));
-    
     // Muestreo de altura procedural para el centro
     const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
     const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
@@ -743,6 +740,11 @@ export class Spaceship {
     
     const targetDist = terrainHeight + this.hoverHeightOffset;
     const currentDist = this.mesh.position.distanceTo(this.hoverPlanet.group.position);
+    
+    // Gentle Gravity Pull (Solo se aplica si estamos flotando muy alto, evita que la nave rebote/tiemble al aterrizar)
+    if (currentDist > targetDist + 1.0) {
+        this.mesh.position.add(toCore.clone().multiplyScalar(-600 * delta));
+    }
     
     // Si la nave está a punto de estrellarse (por debajo del offset de planeo)
     if (currentDist < targetDist) {
@@ -796,14 +798,8 @@ export class Spaceship {
     const targetPosition = planetCenter.clone().add(surfaceNormal.clone().multiplyScalar(targetDistance));
     this.mesh.position.copy(targetPosition);
     
-    // 2. Kill the speed or bounce back slightly
-    if (this.mode === 'FLIGHT') {
-      // Gentle bounce instead of violent ping-pong
-      this.speed = Math.max(0, -this.speed * 0.2);
-    } else {
-      // If hovering, just lose speed, don't violently bounce backwards
-      this.speed *= 0.8;
-    }
+    // 2. Kill the speed gracefully (No bouncy/violent collisions)
+    this.speed = Math.max(0, this.speed * 0.5); // Frena, pero no rebota en dirección inversa
   }
 
 }
