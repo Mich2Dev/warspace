@@ -1462,19 +1462,23 @@ function animate() {
     let closestPlanet = null;
     let minDist = Infinity;
     
-    for (const p of planets) {
-      p.update(camera.position);
-      const d = camera.position.distanceTo(p.group.position);
+    planets.forEach(p => {
+      // Usar la posición de la nave en lugar de la cámara para que girar la cámara no reconstruya los chunks
+      p.update(spaceship.mesh.position);
+      
+      // Rotación opcional lenta del planeta
+      // p.group.rotation.y += delta * 0.01;
+      const d = spaceship.mesh.position.distanceTo(p.group.position);
       if (d < minDist) {
           minDist = d;
           closestPlanet = p;
       }
-    }
+    });
     
     // Dynamic Volumetric Atmosphere
     if (closestPlanet) {
         const alt = minDist - closestPlanet.radius;
-        const atmLimit = closestPlanet.radius * 0.15; // 15% del radio es la altura atmosférica
+        const atmLimit = closestPlanet.radius * 0.05; // 5% del radio (coincide EXACTAMENTE con la esfera visual de la atmósfera)
         
         if (alt < atmLimit) {
             // Factor de fusión: 0 = espacio profundo, 1 = suelo

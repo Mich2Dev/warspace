@@ -48,11 +48,11 @@ export class RemotePlayer {
     }
     
     this.nozzleSettings = [
-      { pos: new THREE.Vector3(0, 0.16, 11.55), scale: 1.8 },
-      { pos: new THREE.Vector3(-1.56, 2.14, 13.5), scale: 0.9 },
-      { pos: new THREE.Vector3(1.56, 2.14, 13.5), scale: 0.9 },
-      { pos: new THREE.Vector3(-5.26, -0.58, 13.5), scale: 2.1 },
-      { pos: new THREE.Vector3(5.26, -0.58, 13.5), scale: 2.1 }
+      { pos: new THREE.Vector3(0, 0.8, 57.75), scale: 3.6 },
+      { pos: new THREE.Vector3(-7.8, 10.7, 67.5), scale: 1.8 },
+      { pos: new THREE.Vector3(7.8, 10.7, 67.5), scale: 1.8 },
+      { pos: new THREE.Vector3(-26.3, -2.9, 67.5), scale: 4.2 },
+      { pos: new THREE.Vector3(26.3, -2.9, 67.5), scale: 4.2 }
     ];
     
     this.engineLight = new THREE.PointLight(0x00aaff, 4, 150);

@@ -169,13 +169,13 @@ export class Spaceship {
       });
     }
     
-    // Exact calibrated nozzle positions (Scaled up by 2.5)
+    // Exact calibrated nozzle positions (Scaled up by 5.0)
     this.nozzleSettings = [
-      { pos: new THREE.Vector3(0, 0.4, 28.875), scale: 1.8 },       // Center main
-      { pos: new THREE.Vector3(-3.9, 5.35, 33.75), scale: 0.9 },     // Inner Left
-      { pos: new THREE.Vector3(3.9, 5.35, 33.75), scale: 0.9 },      // Inner Right
-      { pos: new THREE.Vector3(-13.15, -1.45, 33.75), scale: 2.1 },    // Outer Left
-      { pos: new THREE.Vector3(13.15, -1.45, 33.75), scale: 2.1 }      // Outer Right
+      { pos: new THREE.Vector3(0, 0.8, 57.75), scale: 3.6 },       // Center main
+      { pos: new THREE.Vector3(-7.8, 10.7, 67.5), scale: 1.8 },    // Inner Left
+      { pos: new THREE.Vector3(7.8, 10.7, 67.5), scale: 1.8 },     // Inner Right
+      { pos: new THREE.Vector3(-26.3, -2.9, 67.5), scale: 4.2 },   // Outer Left
+      { pos: new THREE.Vector3(26.3, -2.9, 67.5), scale: 4.2 }     // Outer Right
     ];
     
     // Add a glowing point light to the engine (Disabled to prevent ghost flashes when camera swings)

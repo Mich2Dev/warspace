@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TerrainBuilder } from './TerrainBuilder.js';
 
-const MAX_DEPTH = 8; // Increased to 8 for AAA level detail up close
+const MAX_DEPTH = 7; // Reduced from 8 to prevent explosive stuttering when flying very low
 
 export class Quadtree {
   constructor(group, localUp, radius, color, biome = 'Terran', depth = 0, center = new THREE.Vector2(0,0), size = 2) {

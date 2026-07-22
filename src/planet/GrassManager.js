@@ -12,10 +12,10 @@ export class GrassManager {
         this.planetRadius = planetRadius;
 
         // Área de renderizado ajustada estrictamente alrededor del jugador para MAX FPS
-        this.gridSize = 32; // Mantenemos 80km con celdas más pequeñas
-        this.cellSize = 5000; // Celdas más chicas = pastos mucho más juntos (x4 densidad percibida)
+        this.gridSize = 24; // 60km radio (Oculto bajo la niebla perfectamente)
+        this.cellSize = 5000; 
         this.halfGrid = Math.floor(this.gridSize / 2);
-        this.perCell = 280; // ¡El DOBLE de densidad exacta! ~286k instancias.
+        this.perCell = 150; // Densidad altísima pero sin matar el CPU (~86k instancias en total)
         this.total = this.gridSize * this.gridSize * this.perCell;
 
         // Escala
@@ -317,15 +317,20 @@ export class GrassManager {
 
     /** Meadow clusters — Creates natural clearings and dense patches synced with trees AND lakes */
     patchOk(dir, elev) {
-        const isLakeShore = (elev > -28.0 && elev < -15.0); // Costas húmedas / Oasis
+        const isNearWater = (elev > -28.0 && elev < 100.0); // Costas húmedas y riberas bajas
         
-        // Eliminamos la restricción general para que los valles estén 100% cubiertos
-        // Micro ruido muy suave para que hayan pequeños claros vacíos naturales, pero casi todo cubierto
-        if (!isLakeShore) {
+        // El mismo ruido que usamos para agrupar los árboles en PlanetDecorator.js
+        const clusterNoise = getNoise(dir.x * 2, dir.y * 2, dir.z * 2); 
+        const isForest = (clusterNoise >= 0.4);
+        
+        if (isNearWater || isForest) {
+            // Micro ruido para claros naturales dentro del pastizal
             const micro = getNoise(dir.x * 25, dir.y * 25, dir.z * 25);
-            if (micro > 0.85) return false; // Solo el 15% de la zona plana estará sin hierba
+            if (micro > 0.85) return false; 
+            return true;
         }
-        return true;
+        
+        return false; // Sin agua y sin bosque = llanura desierta o montaña pelada
     }
 
     update(worldCamPos) {
@@ -390,10 +395,10 @@ export class GrassManager {
         }
 
         // Fill fast but carefully to avoid CPU lag 
-        // OPTIMIZED: Smaller batch sizes to prevent stuttering
-        const batch = this.queue.length > 300 ? 100 : (this.queue.length > 100 ? 50 : 20);
+        // OPTIMIZED: Hard cap at 15 cells per frame. The player doesn't move 75,000m per frame.
+        const batch = Math.min(this.queue.length, 15);
         let dirty = false;
-        for (let n = 0; n < batch && this.queue.length; n++) {
+        for (let n = 0; n < batch; n++) {
             this.fillCell(this.queue.shift());
             dirty = true;
         }
@@ -404,38 +409,9 @@ export class GrassManager {
         const dx = (cell.absX - this.anchorX) * this.cellSize;
         const dy = (cell.absY - this.anchorY) * this.cellSize;
         
-        // Usamos distancia radial (Círculo) en lugar de cuadrado para evitar que se vea como un cubo de Minecraft
-        const edge = Math.sqrt(
-            Math.pow(cell.absX - this.anchorX, 2) + 
-            Math.pow(cell.absY - this.anchorY, 2)
-        );
-        
-        // Descartamos completamente la celda si está fuera del anillo visible para ahorrar CPU
-        if (edge > this.halfGrid) {
-            for (const id of cell.indices) this.hide(id);
-            return;
-        }
-
         const cellCenter = this.center.clone()
             .addScaledVector(this.right, dx)
             .addScaledVector(this.forward, dy);
-
-        // OPTIMIZACIÓN EXTREMA CPU: Culling de Horizonte (Curvatura del Planeta)
-        // Si el jugador está bajo, no puede ver más allá del horizonte curvo. No calculamos pasto que está "al otro lado del mundo"
-        if (this.lastCamPos) {
-            const camAltitude = Math.max(10.0, this.lastCamPos.distanceTo(this.planetGroup.position) - this.planetRadius);
-            // Distancia matemática al horizonte d = sqrt(2 * R * h). Aseguramos un mínimo de 65km para que las montañas lejanas no pierdan el pasto.
-            const horizonDist = Math.max(65000.0, Math.sqrt(2.0 * this.planetRadius * camAltitude));
-            
-            const cellCenterWorld = cellCenter.clone().applyMatrix4(this.planetGroup.matrixWorld);
-            const distToCell = cellCenterWorld.distanceTo(this.lastCamPos);
-            
-            // Si la celda está más allá del horizonte curvo, descartamos (CPU +90% boost a baja altitud)
-            if (distToCell > horizonDist + this.cellSize * 1.5) {
-                for (const id of cell.indices) this.hide(id);
-                return;
-            }
-        }
 
         for (let j = 0; j < this.perCell; j++) {
             const id = cell.indices[j];

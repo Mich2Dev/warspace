@@ -14,15 +14,16 @@ function mulberry32(a) {
 }
 const noise3D = createNoise3D(mulberry32(123456789)); // Semilla global fija
 export function getNoise(x, y, z) { return noise3D(x, y, z); }
-const RESOLUTION = 32; // Lowered from 48 to fix lag while preserving smooth terrain via normals
+const RESOLUTION = 32; // Lowered to fix lag while preserving smooth terrain via analytical normals
 
 export class TerrainBuilder {
   static buildChunk(localUp, axisA, axisB, radius, center, size, color, biome = 'Terran') {
     const geometry = new THREE.PlaneGeometry(size, size, RESOLUTION, RESOLUTION);
     const positions = geometry.attributes.position;
     
-    // Arrays for vertex colors
+    // Arrays for vertex colors and normals
     const colors = new Float32Array(positions.count * 3);
+    const normals = new Float32Array(positions.count * 3);
     const baseColorObj = new THREE.Color(color);
     const peakColorObj = baseColorObj.clone().lerp(new THREE.Color(0xffffff), 0.7); // Softer snowy peaks
     const valleyColorObj = new THREE.Color(color).multiplyScalar(0.2); // Darker valleys
@@ -54,6 +55,31 @@ export class TerrainBuilder {
       if (rawRadius < radius - 30.0) {
           finalRadius = radius - 30.0; 
       }
+      
+      // --- Calculate true seamless normals ---
+      const epsT = 0.001; 
+      const getPos = (dx, dy) => {
+          const v = localUp.clone()
+                .addScaledVector(axisA, cx + dx)
+                .addScaledVector(axisB, cy + dy)
+                .normalize();
+          let r = TerrainBuilder.getHeight(v, radius, biome);
+          if (r < radius - 30.0) r = radius - 30.0;
+          return v.multiplyScalar(r);
+      };
+      
+      const pCenter = vertex.clone().multiplyScalar(finalRadius);
+      const pRight = getPos(epsT, 0);
+      const pUp = getPos(0, epsT);
+      
+      const dPdx = pRight.sub(pCenter);
+      const dPdy = pUp.sub(pCenter);
+      const norm = new THREE.Vector3().crossVectors(dPdx, dPdy).normalize();
+      
+      normals[i * 3] = norm.x;
+      normals[i * 3 + 1] = norm.y;
+      normals[i * 3 + 2] = norm.z;
+      // ----------------------------------------
       
       const heightOffset = rawRadius - radius; // Unclamped depth used for color gradients
       
@@ -117,8 +143,7 @@ export class TerrainBuilder {
     }
     
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    
-    geometry.computeVertexNormals();
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     
     // Assign a basic material
     const material = new THREE.MeshStandardMaterial({ 
