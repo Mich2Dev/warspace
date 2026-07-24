@@ -11,43 +11,40 @@ export class GrassManager {
         this.planetGroup = planetGroup;
         this.planetRadius = planetRadius;
 
-        // Área de renderizado ajustada estrictamente alrededor del jugador para MAX FPS
-        this.gridSize = 24; // 60km radio (Oculto bajo la niebla perfectamente)
-        this.cellSize = 5000; 
+        // Cobertura amplia, densidad pensada para 60fps + matas legibles
+        this.gridSize = 24;
+        this.cellSize = 4200;
         this.halfGrid = Math.floor(this.gridSize / 2);
-        this.perCell = 150; // Densidad altísima pero sin matar el CPU (~86k instancias en total)
+        this.perCell = 48; // ~27k matas (antes ~86k)
         this.total = this.gridSize * this.gridSize * this.perCell;
 
-        // Escala
-        this.bladeScale = 65.0; // Un poco más pequeños como pediste
-        this.lift = 1.0;
-        this.viewDist = 90000; // Visible desde 90km (Bajo la niebla)
+        // Bajo hover (~90): se ve volumen sin meterse en la nave
+        this.bladeScale = 28.0;
+        this.lift = 2.0;
+        this.viewDist = 90000;
 
-        // Geometría 3D Real: Optimizada y con Puntas Bordeadas
-        // Geometría 3D Real: Optimizada y con Puntas Bordeadas
-        const bladeCount = 24; // El doble de briznas por parche para que se vea extra denso
+        // Geometría 3D: manojos reales, costo GPU controlado
+        const bladeCount = 9;
         const positions = [];
         const indices = [];
         let vertexOffset = 0;
         
-        // Agrupar en 3 sub-manojos muy apretados
+        // 3 sub-manojos apretados = mata con volumen
         for (let g = 0; g < 3; g++) {
-            const groupOffsetX = (Math.random() - 0.5) * 1.0; // Mas pegadas
-            const groupOffsetZ = (Math.random() - 0.5) * 1.0;
+            const groupOffsetX = (Math.random() - 0.5) * 0.85;
+            const groupOffsetZ = (Math.random() - 0.5) * 0.85;
 
             for (let b = 0; b < bladeCount / 3; b++) {
-                // Independencia de hojas
                 const angle = Math.random() * Math.PI * 2;
-                const radiusSpread = Math.random() * 0.5; // Muy apretadas
+                const radiusSpread = Math.random() * 0.45;
                 const bx = groupOffsetX + Math.cos(angle) * radiusSpread;
                 const bz = groupOffsetZ + Math.sin(angle) * radiusSpread;
                 
-                // Variación Extrema de Tamaño
-                const height = 2.0 + Math.random() * 8.0; 
-                const width = 0.15 + Math.random() * 0.35; 
-                const bend = (Math.random() - 0.2) * 4.0; 
+                const height = 2.2 + Math.random() * 5.5; 
+                const width = 0.18 + Math.random() * 0.28; 
+                const bend = (Math.random() - 0.2) * 2.8; 
                 
-                const segments = 4;
+                const segments = 3;
                 
                 for (let i = 0; i <= segments; i++) {
                     const t = i / segments; 
@@ -128,10 +125,15 @@ export class GrassManager {
 
                 vec4 worldInstPos = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
 
-                // Viento muy sutil para que estén casi quietas por defecto
+                // Viento con ráfagas: un oleaje lento que recorre el campo + temblor propio de cada brizna
                 float randSeed = fract(sin(dot(worldInstPos.xyz, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-                float windX = sin(uTime * 0.8 + randSeed) * 0.03;
-                float windZ = cos(uTime * 0.7 + randSeed) * 0.03;
+                // Frente de ráfaga que viaja por el terreno (onda grande y lenta)
+                float gustWave = sin(uTime * 0.4 + worldInstPos.x * 0.00035 + worldInstPos.z * 0.00028);
+                float gust = 0.5 + 0.5 * gustWave;            // 0..1
+                float windStrength = 0.06 + gust * 0.28;      // calma -> ráfaga marcada
+                float sway = sin(uTime * 1.6 + randSeed * 6.28);
+                float windX = (sin(uTime * 0.8 + randSeed) * 0.35 + sway * 0.25) * windStrength;
+                float windZ = (cos(uTime * 0.7 + randSeed) * 0.35 + sway * 0.20) * windStrength;
 
                 // 3. Onda interactiva direccional de la nave
                 float distToPlayer = distance(worldInstPos.xyz, uPlayerPos);
@@ -185,9 +187,14 @@ export class GrassManager {
                 '#include <color_fragment>',
                 `
                 #include <color_fragment>
-                diffuseColor.rgb *= mix(0.2, 1.0, vHeightFactor);
-                vec3 tipHighlight = vec3(0.1, 0.15, 0.0) * vHeightFactor;
-                diffuseColor.rgb += tipHighlight;
+                // diffuseColor ya trae el color por-brizna (instanceColor): respeta la paleta variada
+                vec3 bladeTint = diffuseColor.rgb;
+
+                // Oscurecer raíz (AO natural) y dar un leve tinte más frío/amarillo en la punta
+                float aoRoot = mix(0.32, 1.0, vHeightFactor);
+                vec3 tipShift = mix(vec3(1.0), vec3(1.12, 1.18, 0.85), vHeightFactor * 0.55);
+
+                diffuseColor.rgb = bladeTint * aoRoot * tipShift;
                 `
             );
         };
@@ -254,10 +261,9 @@ export class GrassManager {
                 float randSeed = fract(sin(dot(gl_FragCoord.xyz, vec3(12.9, 78.2, 45.1))) * 43758.5);
                 float pulse = (sin(uTime * 2.5 + randSeed * 10.0) * 0.5 + 0.5);
                 
-                // Parpadeo intermitente
-                diffuseColor.a *= (0.2 + pulse * 0.8);
-                // Brillo Bloom HDR
-                diffuseColor.rgb *= 2.5; 
+                // Parpadeo suave (sin HDR agresivo que lava el frame)
+                diffuseColor.a *= (0.25 + pulse * 0.75);
+                diffuseColor.rgb *= 1.15; 
             `);
         };
         
@@ -277,12 +283,25 @@ export class GrassManager {
             this.mesh.setMatrixAt(i, this.dummy.matrix);
             this.fireflyMesh.setMatrixAt(i, this.dummy.matrix);
             
-            // Paleta de colores orgánicos y ricos: Desde verde limón/amarillento hasta verde oscuro intenso
-            const isDry = Math.random() > 0.7; // 30% de hojas más secas/amarillas
-            const hue = isDry ? (0.15 + Math.random() * 0.05) : (0.25 + Math.random() * 0.12);
-            const sat = isDry ? 0.6 : (0.65 + Math.random() * 0.25);
-            const light = isDry ? 0.5 : (0.35 + Math.random() * 0.2);
-            
+            // Paleta natural con variedad real por brizna:
+            //  - ~18% seca (dorado/amarillo pajizo)
+            //  - ~20% verde profundo (bosque, zonas de sombra)
+            //  - resto verdes de pradera con matices lima/oliva
+            const roll = Math.random();
+            let hue, sat, light;
+            if (roll < 0.18) {            // seca / pajiza
+                hue = 0.12 + Math.random() * 0.05;
+                sat = 0.45 + Math.random() * 0.2;
+                light = 0.45 + Math.random() * 0.15;
+            } else if (roll < 0.38) {     // verde profundo
+                hue = 0.30 + Math.random() * 0.05;
+                sat = 0.55 + Math.random() * 0.2;
+                light = 0.22 + Math.random() * 0.12;
+            } else {                      // pradera viva
+                hue = 0.24 + Math.random() * 0.10;
+                sat = 0.5 + Math.random() * 0.28;
+                light = 0.34 + Math.random() * 0.2;
+            }
             this.mesh.setColorAt(i, new THREE.Color().setHSL(hue, sat, light));
         }
         this.mesh.instanceMatrix.needsUpdate = true;
@@ -348,9 +367,11 @@ export class GrassManager {
 
         if (alt > this.viewDist || alt < -800) {
             this.mesh.visible = false;
+            if (this.fireflyMesh) this.fireflyMesh.visible = false;
             return;
         }
         this.mesh.visible = true;
+        if (this.fireflyMesh) this.fireflyMesh.visible = true;
 
         if (!this.ready) {
             this.center.copy(camDir).multiplyScalar(this.planetRadius);
@@ -394,15 +415,17 @@ export class GrassManager {
             }
         }
 
-        // Fill fast but carefully to avoid CPU lag 
-        // OPTIMIZED: Hard cap at 15 cells per frame. The player doesn't move 75,000m per frame.
-        const batch = Math.min(this.queue.length, 15);
+        // Carga inicial más rápida; en vuelo suave para no trabar
+        const batch = this.queue.length > 200 ? 12 : (this.queue.length > 40 ? 6 : 3);
         let dirty = false;
-        for (let n = 0; n < batch; n++) {
+        for (let n = 0; n < batch && this.queue.length; n++) {
             this.fillCell(this.queue.shift());
             dirty = true;
         }
-        if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
+        if (dirty) {
+            this.mesh.instanceMatrix.needsUpdate = true;
+            if (this.fireflyMesh) this.fireflyMesh.instanceMatrix.needsUpdate = true;
+        }
     }
 
     fillCell(cell) {
@@ -464,11 +487,10 @@ export class GrassManager {
             this.dummy.updateMatrix();
             this.mesh.setMatrixAt(id, this.dummy.matrix);
             
-            // Spawn Fireflies (Luciérnagas) flotando mágicamente sobre el pasto (solo en un ~25% de los parches para que sean raras y especiales)
-            if (Math.random() > 0.75) {
-                // Posicionar un poco por encima del pasto
-                this.dummy.position.add(this._dir.clone().multiplyScalar(this.bladeScale * 0.15 + Math.random() * 8.0));
-                this.dummy.scale.set(1.5, 1.5, 1.5); // Tamaño de la luciérnaga
+            // Luciérnagas raras (~6%) — ambiente, no lluvia de bloom
+            if (Math.random() > 0.94) {
+                this.dummy.position.add(this._dir.clone().multiplyScalar(this.bladeScale * 0.12 + Math.random() * 6.0));
+                this.dummy.scale.set(1.1, 1.1, 1.1);
                 this.dummy.updateMatrix();
                 this.fireflyMesh.setMatrixAt(id, this.dummy.matrix);
             } else {

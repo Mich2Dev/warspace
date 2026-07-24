@@ -49,8 +49,10 @@ export class Planet {
         }
     }
 
-    // Create Atmosphere
-    const atmoGeometry = new THREE.SphereGeometry(this.radius * 1.05, 64, 64);
+    // Create Atmosphere — thick shell so epic peaks (up to ~6% of radius) sit well inside the sky
+    // Fog / re-entry in main.js use the same ATMO_SHELL factor.
+    const ATMO_SHELL = 1.18;
+    const atmoGeometry = new THREE.SphereGeometry(this.radius * ATMO_SHELL, 64, 64);
     
     // Advanced Procedural Atmospheric Fresnel Shader
     const vertexShader = `
@@ -89,9 +91,9 @@ export class Planet {
     this.group.add(this.atmosphere);
   }
 
-  update(cameraPosition) {
+  update(cameraPosition, spaceshipSpeed = 0) {
     for (const qt of this.quadtrees) {
-      qt.update(cameraPosition);
+      qt.update(cameraPosition, spaceshipSpeed);
     }
     if (this.grassManager) {
       this.grassManager.update(cameraPosition);

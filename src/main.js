@@ -12,6 +12,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { GalaxyBuilder } from './GalaxyBuilder.js';
 import { Skybox } from './Skybox.js';
+import { gameAudio } from './GameAudio.js';
 
 // Setup Keybindings Configuration
 const defaultKeys = {
@@ -46,20 +47,20 @@ mapCamera.position.set(0, 250000000, 0); // 45 million height to see massive orb
 mapCamera.up.set(0, 0, -1);
 mapCamera.lookAt(0, 0, 0);
 
-// Renderer
+// Renderer — nitidez sin saturar GPU en pantallas HiDPI
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-// Cinematic Tone Mapping for glowing objects
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
-// Post-Processing (Bloom for Stars, Engine, Lasers)
+// Bloom solo para soles/motores/láseres — no lavar el terreno
 const renderScene = new RenderPass(scene, camera);
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
-bloomPass.threshold = 0.35;
-bloomPass.strength = 0.85; // Lower bloom cost for fluidity near Earth
-bloomPass.radius = 0.6;
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.35, 0.9);
+bloomPass.threshold = 0.55;
+bloomPass.strength = 0.55;
+bloomPass.radius = 0.45;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(renderScene);
@@ -165,14 +166,15 @@ if (renderer.useLegacyLights === undefined) {
   renderer.physicallyCorrectLights = false;
 }
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 document.getElementById('app').appendChild(renderer.domElement);
 
 // Lighting (Realistic space lighting from the Sun)
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Aumentado para que el lado oscuro del planeta no sea negro intenso
 scene.add(ambientLight);
 
-const starlight = new THREE.HemisphereLight(0xffffff, 0x000033, 0.3); // Bounce light from the cosmos
+// Luz de rebote: cielo claro arriba, rebote cálido verde/tierra abajo => mundo más vivo
+const starlight = new THREE.HemisphereLight(0xbfd8ff, 0x3a5a34, 0.45);
 scene.add(starlight);
 
 // Visual Sun at Center (Reducido para que no ocupe todo el cielo)
@@ -226,6 +228,7 @@ try {
 } catch (_) {}
 
 document.getElementById('btn-login').addEventListener('click', () => {
+  gameAudio.unlock();
   const user = document.getElementById('login-username').value.trim();
   const pass = document.getElementById('login-password').value.trim();
   doLogin(user, pass);
@@ -360,6 +363,7 @@ socket.on('player_left', (id) => {
 socket.on('player_shoot', (data) => {
   if (data.id !== socket.id) {
     createLaser(data.position, data.velocity, 0xffaa00); // Orange enemy laser
+    gameAudio.playLaserShot({ enemy: true });
   }
 });
 
@@ -427,56 +431,7 @@ for (let i = 0; i < 2000; i++) {
   const spaceDust = new THREE.Points(dustGeometry, dustMaterial);
   scene.add(spaceDust);
 // ==========================================
-// THE BLACK HOLE (Gargantua) - Physical 3D Object
-// ==========================================
-const blackHoleGroup = new THREE.Group();
-blackHoleGroup.position.set(250000000, 0, -100000000); 
-const bhRadius = 8000000;
-
-// 1. Event Horizon (Solid Black Sphere)
-const solidSphereGeo = new THREE.SphereGeometry(bhRadius, 64, 64);
-const solidSphereMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-const bhSphere = new THREE.Mesh(solidSphereGeo, solidSphereMat);
-blackHoleGroup.add(bhSphere);
-
-// 2. Inner Accretion Disk (Hot, fast, bright)
-const innerDiskGeo = new THREE.TorusGeometry(bhRadius * 1.8, bhRadius * 0.4, 16, 128);
-const innerDiskMat = new THREE.MeshBasicMaterial({ 
-  color: 0xffaa00, 
-  transparent: true, 
-  opacity: 0.9, 
-  blending: THREE.AdditiveBlending,
-  side: THREE.DoubleSide,
-  depthWrite: false
-});
-window.accretionDiskInner = new THREE.Mesh(innerDiskGeo, innerDiskMat);
-window.accretionDiskInner.rotation.x = Math.PI / 2; // Flat horizontal
-blackHoleGroup.add(window.accretionDiskInner);
-
-// 3. Outer Accretion Disk (Cooler, slower, dimmer)
-const outerDiskGeo = new THREE.TorusGeometry(bhRadius * 2.8, bhRadius * 0.7, 16, 128);
-const outerDiskMat = new THREE.MeshBasicMaterial({ 
-  color: 0xff4400, 
-  transparent: true, 
-  opacity: 0.4, 
-  blending: THREE.AdditiveBlending,
-  side: THREE.DoubleSide,
-  depthWrite: false
-});
-window.accretionDiskOuter = new THREE.Mesh(outerDiskGeo, outerDiskMat);
-window.accretionDiskOuter.rotation.x = Math.PI / 2;
-blackHoleGroup.add(window.accretionDiskOuter);
-
-scene.add(blackHoleGroup);
-
-// Black Hole Map Marker
-const mapBHGeo = new THREE.CircleGeometry(bhRadius * 4, 32);
-const mapBHMat = new THREE.MeshBasicMaterial({ color: 0xff4400, side: THREE.DoubleSide });
-const mapBH = new THREE.Mesh(mapBHGeo, mapBHMat);
-mapBH.rotation.x = -Math.PI / 2;
-mapBH.position.copy(blackHoleGroup.position);
-mapVisuals.add(mapBH);
-
+// Black Hole Removed
 // ==========================================
 // Spaceship Initialization
 // ==========================================
@@ -828,6 +783,7 @@ function fireLaser() {
   const laserVelocity = forward.clone().multiplyScalar(laserSpeed);
   
   createLaser(startPos, laserVelocity, 0x00ff88); // Green friendly laser
+  gameAudio.playLaserShot({ enemy: false });
   
   // Send to server
   socket.emit('player_shoot', { position: startPos, velocity: laserVelocity });
@@ -969,6 +925,12 @@ document.addEventListener('wheel', (e) => {
   }
 });
 
+document.addEventListener('pointerlockchange', () => {
+  if (document.pointerLockElement === document.body) {
+    gameAudio.unlock();
+  }
+});
+
 
 // Resize handler
 window.addEventListener('resize', () => {
@@ -1030,6 +992,7 @@ socket.on('chat_message', (data) => {
 // Game loop
 const clock = new THREE.Clock();
 let lastNetworkTick = 0;
+let lastAmbientAudioTick = 0;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1084,38 +1047,7 @@ function animate() {
         spaceship.canAutoAnchor = true;
       }
 
-      // Black Hole Gravity
-      const distToBH = spaceship.mesh.position.distanceTo(blackHoleGroup.position);
-      if (distToBH < bhRadius * 20) { 
-        const pullDir = new THREE.Vector3().subVectors(blackHoleGroup.position, spaceship.mesh.position).normalize();
-        
-        // Clamp the pull force so it doesn't snap instantly, creating a smooth but terrifying acceleration
-        let pullForce = (Math.pow(bhRadius * 3 / Math.max(1000, distToBH), 2)) * 80000;
-        pullForce = Math.min(pullForce, 8000000); 
-        const bhGravityStrength = pullForce * delta; 
-        
-        spaceship.mesh.position.add(pullDir.multiplyScalar(bhGravityStrength));
-        
-        // Violent spin as you approach the event horizon!
-        if (distToBH < bhRadius * 3) {
-           spaceship.mesh.rotateZ(delta * (bhRadius * 3 / distToBH) * 2);
-           spaceship.mesh.rotateX(delta * Math.random());
-        }
 
-        // Spaghettification Death
-        if (distToBH < bhRadius * 1.02 && !spaceship.isDead) {
-          spaceship.hp = 0;
-          spaceship.isDead = true;
-          
-          const deathScreen = document.getElementById('death-screen');
-          if (deathScreen) {
-            document.exitPointerLock();
-            deathScreen.style.display = 'block';
-            deathScreen.style.pointerEvents = 'auto';
-            deathScreen.innerHTML = '<span style="color:#ff00ff; text-shadow: 0 0 20px #ff00ff;">SPAGHETTIFIED</span><br><span style="font-size:16px;">Cruzaste el Horizonte de Sucesos. Fuiste aplastado hasta volverte energía pura.</span><br><br><button onclick="window.respawnPlayer()" style="padding:10px 20px; background:#ff00ff; color:#fff; border:none; cursor:pointer; pointer-events:auto;">REAPARECER</button>';
-          }
-        }
-      }
     }
 
     // === Update Ship & Camera (After gravity moves the ship) ===
@@ -1311,64 +1243,50 @@ function animate() {
       let actualTerrainHeight = TerrainBuilder.getHeight(_localDir, p.radius, p.biome, true);
       const approxAlt = distToPlanet - actualTerrainHeight;
 
-      // Full mesh raycast only in the last ~800u (trees no longer participate — raycast disabled)
-      if (approxAlt < 800) {
-        _rayStart.copy(spaceship.mesh.position).addScaledVector(dirFromPlanet, 5000);
-        _rayDir.copy(dirFromPlanet).negate();
-        terrainRaycaster.set(_rayStart, _rayDir);
-        const intersects = terrainRaycaster.intersectObject(p.group, true);
-        for (let hi = 0; hi < intersects.length; hi++) {
-          if (intersects[hi].object.isTerrainChunk) {
-            actualTerrainHeight = intersects[hi].point.distanceTo(p.group.position);
-            break;
-          }
-        }
-      }
+      // El raycast contra millones de polígonos fue eliminado por causar lag extremo.
+      // Confiamos 100% en la matemática instantánea (actualTerrainHeight) que es suficientemente precisa.
       
-      if (distToPlanet < actualTerrainHeight + 25) {
-        if (spaceship.mode === 'FLIGHT') {
-            const overlap = (actualTerrainHeight + 25) - distToPlanet;
+      // Clearance mínimo: evita meter la nave en el mesh.
+      // OJO: en levitación (isLanded) NO tocamos la posición — updateLanded es el único dueño
+      // de la altura; si dos sistemas la corrigen a la vez, la nave tiembla.
+      if (spaceship.mode === 'FLIGHT') {
+        const shipClearance = 55;
+        if (distToPlanet < actualTerrainHeight + shipClearance) {
+            const overlap = (actualTerrainHeight + shipClearance) - distToPlanet;
             spaceship.mesh.position.add(dirFromPlanet.clone().multiplyScalar(overlap * 5.0 * delta));
             
             // Freno suave sin rebote
             spaceship.speed = Math.max(0, spaceship.speed * 0.5); 
-        } else {
-            spaceship.mesh.position.copy(p.group.position).add(dirFromPlanet.multiplyScalar(actualTerrainHeight + 25));
+        }
+      } else if (spaceship.mode === 'HOVER' && !spaceship.isLanded) {
+        // Red de seguridad SOLO si se hunde de verdad (updateHover ya mantiene los 90)
+        const shipClearance = 40;
+        if (distToPlanet < actualTerrainHeight + shipClearance) {
+            spaceship.mesh.position.copy(p.group.position).add(dirFromPlanet.multiplyScalar(actualTerrainHeight + spaceship.hoverHeightOffset));
         }
       }
     }
     
-    // FIX CAMERA CLIPPING
+    // FIX CAMERA CLIPPING — margen amplio + elevar boom si hace falta
     const cameraDist = spaceship.camera.position.distanceTo(p.group.position);
-    if (cameraDist < p.radius * 1.25) {
+    if (cameraDist < p.radius * 1.35) {
        const dirFromPlanetToCamera = new THREE.Vector3().subVectors(spaceship.camera.position, p.group.position).normalize();
        _quatInv.copy(p.group.quaternion).invert();
        _localDir.copy(dirFromPlanetToCamera).applyQuaternion(_quatInv);
 
        let cameraTerrainHeight = TerrainBuilder.getHeight(_localDir, p.radius, p.biome, true);
-       const camApproxAlt = cameraDist - cameraTerrainHeight;
-
-       if (camApproxAlt < 800) {
-         _rayStart.copy(spaceship.camera.position).addScaledVector(dirFromPlanetToCamera, 5000);
-         _rayDir.copy(dirFromPlanetToCamera).negate();
-         camTerrainRaycaster.set(_rayStart, _rayDir);
-         const camIntersects = camTerrainRaycaster.intersectObject(p.group, true);
-         for (let hi = 0; hi < camIntersects.length; hi++) {
-           if (camIntersects[hi].object.isTerrainChunk) {
-             cameraTerrainHeight = camIntersects[hi].point.distanceTo(p.group.position);
-             break;
-           }
-         }
-       }
+       const camClearance = 160; // margen amplio: no atraviesa piso ni lomas cercanas
        
-       if (cameraDist < cameraTerrainHeight + 25) {
-           const safePosition = p.group.position.clone().add(dirFromPlanetToCamera.clone().multiplyScalar(cameraTerrainHeight + 25));
+       if (cameraDist < cameraTerrainHeight + camClearance) {
+           const safePosition = p.group.position.clone().add(
+             dirFromPlanetToCamera.clone().multiplyScalar(cameraTerrainHeight + camClearance)
+           );
            spaceship.camera.position.copy(safePosition);
        }
     }
     
     // 4. Atmospheric Re-entry Friction
-    const atmosphereLimit = p.radius * 1.15; // Tight atmosphere to prevent triggering while inside rings (1.3+)
+    const atmosphereLimit = p.radius * 1.18; // Match visual ATMO_SHELL (peaks ~6% stay deep inside)
     if (distToPlanet < atmosphereLimit && distToPlanet > p.radius) {
         // Depth is 0 at edge of atmosphere, 1 at the ground
         const depth = 1.0 - ((distToPlanet - p.radius) / (atmosphereLimit - p.radius));
@@ -1448,12 +1366,8 @@ function animate() {
 
   // Stretch dust particles into lines based on ship speed and direction
   // This gives the Star Wars hyperspace effect!
-  if (!isMapMode && spaceship.mode === 'FLIGHT') {
-    // Only show dust when flying fast outside atmospheres
-    spaceDust.visible = spaceship.speed > 50;
-  } else {
-    spaceDust.visible = false;
-  }
+  // Desactivado por completo por petición del usuario (Opción C)
+  spaceDust.visible = false;
 
   if (!isMapMode) {
     shipMarker.visible = false;
@@ -1463,11 +1377,9 @@ function animate() {
     let minDist = Infinity;
     
     planets.forEach(p => {
-      // Usar la posición de la nave en lugar de la cámara para que girar la cámara no reconstruya los chunks
-      p.update(spaceship.mesh.position);
+      // Pass both position (for proximity LOD) and speed (for Velocity-Based LOD)
+      p.update(spaceship.mesh.position, spaceship.speed);
       
-      // Rotación opcional lenta del planeta
-      // p.group.rotation.y += delta * 0.01;
       const d = spaceship.mesh.position.distanceTo(p.group.position);
       if (d < minDist) {
           minDist = d;
@@ -1478,11 +1390,14 @@ function animate() {
     // Dynamic Volumetric Atmosphere
     if (closestPlanet) {
         const alt = minDist - closestPlanet.radius;
-        const atmLimit = closestPlanet.radius * 0.05; // 5% del radio (coincide EXACTAMENTE con la esfera visual de la atmósfera)
+        // 18% del radio = misma cáscara visual (Planet ATMO_SHELL 1.18). Antes 5% y las cumbres se salían del cielo.
+        const atmLimit = closestPlanet.radius * 0.18;
         
         if (alt < atmLimit) {
             // Factor de fusión: 0 = espacio profundo, 1 = suelo
-            const blend = THREE.MathUtils.clamp(1.0 - Math.max(0, alt) / atmLimit, 0.0, 1.0);
+            // Suaviza la salida: el cielo se mantiene más tiempo al subir
+            const t = THREE.MathUtils.clamp(Math.max(0, alt) / atmLimit, 0.0, 1.0);
+            const blend = 1.0 - t * t; // quadratic falloff — thick mid-atmosphere feel
             
             // Calculamos color del cielo. Más suave y luminoso en la superficie.
             const fogColor = new THREE.Color(closestPlanet.color).multiplyScalar(0.7);
@@ -1490,9 +1405,9 @@ function animate() {
                 fogColor.setHex(0x55aaff); // Cielo azul clásico para la tierra
             }
             
-            // Transición de niebla: en el espacio está muy lejos, en el suelo cubre a partir de 1km hasta 70km
-            const fogNear = THREE.MathUtils.lerp(closestPlanet.radius, 1000, blend);
-            const fogFar = THREE.MathUtils.lerp(closestPlanet.radius * 2, 70000, blend); // 70km: opaco antes de que termine el pasto (80km)
+            // Transición de niebla: más lejos en superficie para que el valle no “acabe” en el cielo al instante
+            const fogNear = THREE.MathUtils.lerp(closestPlanet.radius, 2000, blend);
+            const fogFar = THREE.MathUtils.lerp(closestPlanet.radius * 2.2, 120000, blend);
             
             scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
             scene.background = fogColor.clone().multiplyScalar(blend); // El fondo se vuelve el cielo
@@ -1510,6 +1425,19 @@ function animate() {
     } else {
         scene.fog = null;
         scene.background = new THREE.Color(0x000000);
+    }
+
+    // Ambiente sonoro (throttle ~5Hz — no saturar el audio thread)
+    if (time - lastAmbientAudioTick > 0.2) {
+      lastAmbientAudioTick = time;
+      const nearPlanet = !!(closestPlanet && (minDist - closestPlanet.radius) < closestPlanet.radius * 0.08);
+      gameAudio.updateAmbient({
+        mode: spaceship.mode,
+        speed: spaceship.speed,
+        nearPlanet,
+        landed: !!spaceship.isLanded,
+        flameScale: spaceship.flameScale || 0
+      });
     }
 
     renderScene.camera = camera;

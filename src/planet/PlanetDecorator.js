@@ -13,111 +13,109 @@ function mulberry32(a) {
 }
 const noise3D = createNoise3D(mulberry32(987654321)); 
 
-// --- Generador de Textura Procedural de Hojas ---
-function generateLeafTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    
-    // Transparente por defecto
-    ctx.clearRect(0, 0, 128, 128);
-    
-    // Dibujar rama central
-    ctx.strokeStyle = '#4a3623';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(64, 128);
-    ctx.lineTo(64, 10);
-    ctx.stroke();
-    
-    // Dibujar múltiples hojas
-    for (let i = 0; i < 40; i++) {
-        const y = 10 + Math.random() * 110;
-        const side = Math.random() > 0.5 ? 1 : -1;
-        const length = 15 + Math.random() * 25;
-        const width = 8 + Math.random() * 10;
-        
-        ctx.fillStyle = `hsl(${100 + Math.random() * 40}, ${60 + Math.random() * 20}%, ${30 + Math.random() * 20}%)`;
-        
-        ctx.beginPath();
-        ctx.ellipse(64 + (length / 2) * side, y, length, width, (Math.random() - 0.5) * 0.5, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-}
-
-let sharedLeafTexture = null;
+// Generador procedural eliminado. Usamos geometría 3D pura y estilizada (Low-poly AAA)
 
 // --- Generadores Terran (árboles / sotobosque) ---
 
-function generateAlienTreePair() {
-    const trunkGeometries = [];
-    const leavesGeometries = [];
-    
-    // Un árbol tipo Pino/Roble híbrido, majestuoso y grueso
-    const trunkRadius = 1.0 + Math.random() * 0.8;
-    const trunkHeight = 15 + Math.random() * 10; // Altura: 15-25 (muy alto)
-    const trunkGeom = new THREE.CylinderGeometry(trunkRadius * 0.4, trunkRadius, trunkHeight, 7, 4);
-    trunkGeom.translate(0, trunkHeight / 2, 0); // Base at 0
-    
-    // Perturbar el tronco para que se vea orgánico (AAA style)
-    const pos = trunkGeom.attributes.position;
+function _perturbCylinder(geom, amount = 0.25) {
+    const pos = geom.attributes.position;
     const v = new THREE.Vector3();
     for (let i = 0; i < pos.count; i++) {
         v.fromBufferAttribute(pos, i);
-        v.x += noise3D(v.x*2, v.y*2, v.z*2) * 0.4;
-        v.z += noise3D(v.x*2, v.y*2, v.z*2 + 10) * 0.4;
+        v.x += (Math.random() - 0.5) * amount;
+        v.z += (Math.random() - 0.5) * amount;
         pos.setXYZ(i, v.x, v.y, v.z);
     }
-    trunkGeometries.push(trunkGeom);
+}
 
-    // Hojas (Canopy fotorrealista con Cross-Quads de cero lag)
-    const numLeafClusters = 6 + Math.floor(Math.random() * 5);
-    
-    // Creamos la geometría de las ramas (dos planos cruzados = 4 triángulos por rama)
-    const leafGeo = new THREE.PlaneGeometry(8, 8);
-    // Mover el centro del plano a la base para que la rama nazca del tronco
-    leafGeo.translate(0, 4, 0); 
+/** Conifer / pine — stacked irregular cones */
+function generatePineTreePair() {
+    const trunkRadius = 0.45 + Math.random() * 0.35;
+    const trunkHeight = 7 + Math.random() * 5;
+    const trunkGeom = new THREE.CylinderGeometry(trunkRadius * 0.55, trunkRadius * 1.15, trunkHeight, 6, 2);
+    trunkGeom.translate(0, trunkHeight / 2, 0);
+    _perturbCylinder(trunkGeom, 0.22);
 
-    for (let i = 0; i < numLeafClusters; i++) {
-        // Distribuimos los clusters alrededor de la copa
-        const angle = (i / numLeafClusters) * Math.PI * 2 + (Math.random() * 0.5);
-        const r = 0.5 + Math.random() * 1.5; // Muy cerca del tronco
-        const lx = Math.cos(angle) * r;
-        const lz = Math.sin(angle) * r;
-        const ly = trunkHeight * 0.4 + Math.random() * (trunkHeight * 0.5);
-        
-        // Creamos la geometría cruzada (Cross-Quad)
-        const branchGroup = new THREE.Group();
-        const mesh1 = new THREE.Mesh(leafGeo);
-        const mesh2 = new THREE.Mesh(leafGeo);
-        mesh2.rotation.y = Math.PI / 2;
-        
-        // Las ramas cuelgan o se alzan un poco aleatoriamente
-        branchGroup.rotation.x = (Math.random() - 0.5) * 1.5;
-        branchGroup.rotation.z = (Math.random() - 0.5) * 1.5;
-        branchGroup.rotation.y = Math.random() * Math.PI;
-        branchGroup.position.set(lx, ly, lz);
-        branchGroup.scale.setScalar(0.8 + Math.random() * 0.6);
-        branchGroup.updateMatrixWorld(true);
-        
-        // Aplicar la matriz global del grupo a los planos y añadirlos
-        const geom1 = leafGeo.clone().applyMatrix4(mesh1.matrixWorld).applyMatrix4(branchGroup.matrixWorld);
-        const geom2 = leafGeo.clone().applyMatrix4(mesh2.matrixWorld).applyMatrix4(branchGroup.matrixWorld);
-        
-        leavesGeometries.push(geom1, geom2);
+    const leavesGeometries = [];
+    const numTiers = 4 + Math.floor(Math.random() * 2);
+    let currentHeight = trunkHeight * 0.28;
+    let currentRadius = 2.8 + Math.random() * 1.2;
+    const v = new THREE.Vector3();
+
+    for (let i = 0; i < numTiers; i++) {
+        const tierHeight = 3.2 + Math.random() * 2.2;
+        const tierGeom = new THREE.ConeGeometry(currentRadius, tierHeight, 7, 1);
+        tierGeom.translate(0, currentHeight + tierHeight / 2, 0);
+        const tPos = tierGeom.attributes.position;
+        const midY = currentHeight + tierHeight / 2;
+        for (let j = 0; j < tPos.count; j++) {
+            v.fromBufferAttribute(tPos, j);
+            if (v.y < midY) {
+                v.y += (Math.random() - 0.5) * 1.1;
+                v.x += (Math.random() - 0.5) * 0.45;
+                v.z += (Math.random() - 0.5) * 0.45;
+            }
+            tPos.setXYZ(j, v.x, v.y, v.z);
+        }
+        leavesGeometries.push(tierGeom);
+        currentHeight += tierHeight * 0.55;
+        currentRadius *= 0.72;
     }
-    
-    const mTrunk = trunkGeometries.length > 0 ? BufferGeometryUtils.mergeGeometries(trunkGeometries) : new THREE.BufferGeometry();
-    const mLeaves = leavesGeometries.length > 0 ? BufferGeometryUtils.mergeGeometries(leavesGeometries) : new THREE.BufferGeometry();
-    
-    // OJO: Los planos ya tienen sus normales correctas hacia afuera de fábrica, no llamar a computeVertexNormals para evitar shading feo
+
+    const mTrunk = BufferGeometryUtils.mergeGeometries([trunkGeom]);
+    const mLeaves = BufferGeometryUtils.mergeGeometries(leavesGeometries);
     mTrunk.computeVertexNormals();
+    mLeaves.computeVertexNormals();
     return [mTrunk, mLeaves];
+}
+
+/** Broadleaf — trunk + clustered canopy blobs */
+function generateBroadleafTreePair() {
+    const trunkRadius = 0.55 + Math.random() * 0.4;
+    const trunkHeight = 5 + Math.random() * 3.5;
+    const trunkGeom = new THREE.CylinderGeometry(trunkRadius * 0.7, trunkRadius * 1.2, trunkHeight, 6, 2);
+    trunkGeom.translate(0, trunkHeight / 2, 0);
+    _perturbCylinder(trunkGeom, 0.28);
+
+    // Small branch stubs for silhouette
+    const branchGeoms = [trunkGeom];
+    for (let b = 0; b < 2; b++) {
+        const br = new THREE.CylinderGeometry(0.12, 0.22, 1.8 + Math.random(), 4, 1);
+        br.rotateZ((Math.random() > 0.5 ? 1 : -1) * (0.7 + Math.random() * 0.5));
+        br.translate(
+            (Math.random() - 0.5) * 0.8,
+            trunkHeight * (0.55 + Math.random() * 0.25),
+            (Math.random() - 0.5) * 0.8
+        );
+        branchGeoms.push(br);
+    }
+
+    const leavesGeometries = [];
+    const canopyY = trunkHeight * 0.85;
+    const blobs = 5 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < blobs; i++) {
+        const s = 1.6 + Math.random() * 1.4;
+        const leaf = new THREE.IcosahedronGeometry(s, 0);
+        leaf.scale(1.15 + Math.random() * 0.35, 0.75 + Math.random() * 0.35, 1.1 + Math.random() * 0.3);
+        leaf.translate(
+            (Math.random() - 0.5) * 2.4,
+            canopyY + Math.random() * 2.2,
+            (Math.random() - 0.5) * 2.4
+        );
+        leavesGeometries.push(leaf);
+    }
+
+    const mTrunk = BufferGeometryUtils.mergeGeometries(branchGeoms);
+    const mLeaves = BufferGeometryUtils.mergeGeometries(leavesGeometries);
+    mTrunk.computeVertexNormals();
+    mLeaves.computeVertexNormals();
+    return [mTrunk, mLeaves];
+}
+
+function generateTreePair(variantIndex) {
+    // Mix: pine, pine, broadleaf for a natural forest feel
+    if (variantIndex === 2) return generateBroadleafTreePair();
+    return generatePineTreePair();
 }
 
 // --- Generadores de Sotobosque (Undergrowth / Clutter) ---
@@ -153,23 +151,20 @@ export class PlanetDecorator {
       };
       
       for(let i=0; i<3; i++) {
-          const [trunk, leaves] = generateAlienTreePair();
+          const [trunk, leaves] = generateTreePair(i);
           this.geometries.treeTrunk.push(trunk);
           this.geometries.treeLeaves.push(leaves);
       }
       
-      if (!sharedLeafTexture) sharedLeafTexture = generateLeafTexture();
-      
       this.materials = {
-          trunk: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0, flatShading: false }),
+          trunk: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: false }),
           leaves: new THREE.MeshStandardMaterial({ 
               color: 0xffffff, 
-              roughness: 0.9, 
-              map: sharedLeafTexture,
-              alphaTest: 0.5,
-              side: THREE.DoubleSide
+              roughness: 0.88, 
+              flatShading: true,
+              side: THREE.FrontSide
           }),
-          bushMat: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: false })
+          bushMat: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, flatShading: false })
       };
       
       this.initialized = true;
@@ -189,10 +184,15 @@ export class PlanetDecorator {
     const isDual = true;
     const geoms1 = this.geometries.treeTrunk;
     const mat1 = this.materials.trunk;
-    const baseColorObj1 = new THREE.Color(0x4a3623);
+    const baseColorObj1 = new THREE.Color(0x3d2a1a);
     const geoms2 = this.geometries.treeLeaves;
     const mat2 = this.materials.leaves;
-    const baseColorObj2 = new THREE.Color(0x22cc55);
+    // Muted forest greens (not neon)
+    const leafPalettes = [
+        new THREE.Color(0x2a4a28), // deep pine
+        new THREE.Color(0x355c30), // mid forest
+        new THREE.Color(0x3f6a38)  // broadleaf summer
+    ];
 
     const instancedMeshes1 = [];
     const instancedMeshes2 = [];
@@ -237,42 +237,55 @@ export class PlanetDecorator {
         
         const clusterNoise = noise3D(dir.x * 2, dir.y * 2, dir.z * 2); 
         
-        if (slope > radius * 0.05) continue; 
-        if (height - radius < -28.0) continue;
-        // Solo sembrar árboles si el ruido supera 0.4 (Bosques hiper-densos en el 30% del mapa)
+        const elev = height - radius;
+        if (slope > radius * 0.04) continue;
+        if (elev < -28.0) continue;
+        if (elev > 5500) continue; // tree line — no forest on alpine snow
+        // Bosques densos en ~30% del mapa
         if (clusterNoise < 0.4) continue;
         
         const pos = dir.clone().multiplyScalar(height);
         dummy.position.copy(pos);
         dummy.quaternion.setFromUnitVectors(upVector, dir);
         
-        const baseScale = radius * 0.0005; 
-        const scale = baseScale + noise3D(dir.x * 5, dir.y * 5, 3) * (baseScale * 1.0); 
-        const scaleX = scale * (0.8 + noise3D(dir.x * 20, dir.y * 20, 1) * 0.4);
-        const scaleY = scale * (0.8 + noise3D(dir.x * 20, dir.y * 20, 2) * 1.2);
-        const scaleZ = scale * (0.8 + noise3D(dir.x * 20, dir.y * 20, 3) * 0.4);
+        // Slightly smaller / denser silhouette near the tree line
+        const alpineShrink = elev > 3200 ? THREE.MathUtils.clamp(1.0 - (elev - 3200) / 2300, 0.55, 1.0) : 1.0;
+        const baseScale = radius * 0.00048 * alpineShrink;
+        const scale = baseScale + noise3D(dir.x * 5, dir.y * 5, 3) * (baseScale * 0.9);
+        const scaleX = scale * (0.85 + noise3D(dir.x * 20, dir.y * 20, 1) * 0.3);
+        const scaleY = scale * (0.95 + noise3D(dir.x * 20, dir.y * 20, 2) * 0.9);
+        const scaleZ = scale * (0.85 + noise3D(dir.x * 20, dir.y * 20, 3) * 0.3);
         
-        dummy.scale.set(scaleX * 1.2, scaleY * 1.2, scaleZ * 1.2);
-        dummy.rotateX((noise3D(dir.x * 15, dir.y * 15, 1) * Math.PI) / 16);
-        dummy.rotateZ((noise3D(dir.x * 15, dir.y * 15, 2) * Math.PI) / 16);
+        dummy.scale.set(scaleX, scaleY, scaleZ);
+        dummy.rotateX((noise3D(dir.x * 15, dir.y * 15, 1) * Math.PI) / 20);
+        dummy.rotateZ((noise3D(dir.x * 15, dir.y * 15, 2) * Math.PI) / 20);
         dummy.rotateY(noise3D(dir.x * 10, dir.y * 10, 4) * Math.PI * 2);
         dummy.updateMatrix();
         
-        const v = Math.floor(Math.random() * NUM_VARIANTS);
+        // Prefer pines higher up; broadleaf in valleys
+        let v = Math.floor(Math.random() * NUM_VARIANTS);
+        if (elev > 2800 && Math.random() < 0.7) v = Math.floor(Math.random() * 2); // pine variants 0–1
+        if (elev < 800 && Math.random() < 0.45) v = 2; // broadleaf lowlands
+        
         const idx = instanceCounts[v];
         instancedMeshes1[v].setMatrixAt(idx, dummy.matrix);
         
-        let hueShift = noise3D(dir.x * 30, dir.y * 30, 5); 
+        let hueShift = noise3D(dir.x * 30, dir.y * 30, 5);
         colorDummy.copy(baseColorObj1);
         const hsl = {}; colorDummy.getHSL(hsl);
-        colorDummy.setHSL(hsl.h + hueShift * 0.1, 0.5, 0.3 + Math.abs(hueShift)*0.15);
+        colorDummy.setHSL(hsl.h + hueShift * 0.04, 0.35, 0.22 + Math.abs(hueShift) * 0.08);
         instancedMeshes1[v].setColorAt(idx, colorDummy);
         
         instancedMeshes2[v].setMatrixAt(idx, dummy.matrix);
-        let hueShift2 = noise3D(dir.x * 25, dir.y * 25, 6); 
-        colorDummy2.copy(baseColorObj2);
+        colorDummy2.copy(leafPalettes[v]);
         const hsl2 = {}; colorDummy2.getHSL(hsl2);
-        colorDummy2.setHSL(hsl2.h + hueShift2 * 0.8, 0.8, 0.5); 
+        // Cooler / desaturated near tree line
+        const cool = elev > 3000 ? 0.12 : 0;
+        colorDummy2.setHSL(
+            hsl2.h + hueShift * 0.06,
+            Math.max(0.25, hsl2.s - cool - Math.abs(hueShift) * 0.05),
+            hsl2.l + hueShift * 0.06 - cool * 0.05
+        );
         instancedMeshes2[v].setColorAt(idx, colorDummy2);
         
         instanceCounts[v]++;
@@ -295,7 +308,7 @@ export class PlanetDecorator {
     const numClutter = 2000;
     const clutterGeoms = this.geometries.bush;
     const clutterMat = this.materials.bushMat;
-    const baseClutterColor = new THREE.Color(0x33aa44);
+    const baseClutterColor = new THREE.Color(0x2f5a2c);
     
     const clutterMeshes = [];
     const clutterCounts = [0, 0, 0];
@@ -321,7 +334,8 @@ export class PlanetDecorator {
         dir.normalize();
         
         const height = TerrainBuilder.getHeight(dir, radius, biome);
-        if (height - radius < -28.0) continue;
+        const elev = height - radius;
+        if (elev < -28.0 || elev > 4800) continue;
         
         const clusterNoise = noise3D(dir.x * 2, dir.y * 2, dir.z * 2); 
         if (clusterNoise < 0.1) continue; 

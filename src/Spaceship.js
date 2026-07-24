@@ -203,8 +203,38 @@ export class Spaceship {
     this.mode = 'FLIGHT'; // 'FLIGHT' or 'HOVER'
     this.isLanded = false;
     this.hoverPlanet = null; // Planet data for anchoring
-    this.hoverHeightOffset = 90; // Aumentado para evitar enterrarse ya que la nave es más grande
+    this.hoverHeightOffset = 90; // Altura de planeo en hover activo
+    this.landedHoverOffset = 140; // Levitación de piloto automático al "reposar" (bien visible)
     this.canAutoAnchor = true; // Prevents re-anchoring immediately after takeoff
+    this._hoverBobPhase = 0;
+
+    // Halo de levitación bajo la nave (piloto automático manteniendo altura)
+    const hoverCanvas = document.createElement('canvas');
+    hoverCanvas.width = 128;
+    hoverCanvas.height = 128;
+    const hctx = hoverCanvas.getContext('2d');
+    const hgrad = hctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    hgrad.addColorStop(0, 'rgba(120, 220, 255, 0.95)');
+    hgrad.addColorStop(0.35, 'rgba(40, 160, 255, 0.45)');
+    hgrad.addColorStop(1, 'rgba(0, 40, 80, 0)');
+    hctx.fillStyle = hgrad;
+    hctx.fillRect(0, 0, 128, 128);
+    const hoverTex = new THREE.CanvasTexture(hoverCanvas);
+    this.hoverPad = new THREE.Mesh(
+      new THREE.CircleGeometry(18, 32),
+      new THREE.MeshBasicMaterial({
+        map: hoverTex,
+        transparent: true,
+        opacity: 0.0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    );
+    this.hoverPad.rotation.x = -Math.PI / 2;
+    this.hoverPad.position.set(0, -8, 5);
+    this.hoverPad.visible = false;
+    this.mesh.add(this.hoverPad);
     
     // Autopilot
     this.autoTarget = null; // { type: 'planet'|'player', obj: Ref }
@@ -322,6 +352,10 @@ export class Spaceship {
     } else if (this.mode === 'HOVER') {
       if (!this.isLanded) {
         this.updateHover(delta, keys);
+        if (this.hoverPad) {
+          this.hoverPad.visible = false;
+          this.hoverPad.material.opacity = 0;
+        }
       } else {
         this.updateLanded(delta, keys);
       }
@@ -359,16 +393,8 @@ export class Spaceship {
     );
     this.camera.quaternion.slerp(targetQuaternion, 0.2); // Smooth turning
     
-    // Dynamic FOV for hyperspace warp effect!
-    // Prevent extreme deformation by clamping the ratio, but allow crazy warp for Spacebar
-    let speedRatio = 0;
-    if (this.mode === 'FLIGHT') {
-      speedRatio = Math.max(0, Math.min(1.0, this.speed / (this.maxSpeed * 50)));
-    } else {
-      // In hover mode, speeds are lower but feel faster because you are close to the ground
-      speedRatio = Math.max(0, Math.min(1.0, this.speed / 50000));
-    }
-    const targetFov = 75 + (speedRatio * 60);
+    // Efecto desactivado por petición del usuario (Opción C)
+    const targetFov = 75; // FOV fijo y rígido
     this.camera.fov += (targetFov - this.camera.fov) * 0.1;
     this.camera.updateProjectionMatrix();
   }
@@ -603,6 +629,10 @@ export class Spaceship {
     if (this.isLanded) {
         // Despegar
         this.isLanded = false;
+        if (this.hoverPad) {
+          this.hoverPad.visible = false;
+          this.hoverPad.material.opacity = 0;
+        }
         // El lerp de updateHover se encargará de subir la nave suavemente a la altitud de vuelo.
         
         const statusUI = document.getElementById('autopilot-status');
@@ -611,42 +641,69 @@ export class Spaceship {
             setTimeout(() => { if (!this.autopilotEngaged) statusUI.innerText = ''; }, 2000);
         }
     } else {
-        // Aterrizar
+        // Aterrizar = levitación estacionaria (piloto automático)
         this.isLanded = true;
-        this.speed = 0; // Freno total
+        this.speed = 0;
         
         const statusUI = document.getElementById('autopilot-status');
         if (statusUI) {
-            statusUI.innerText = 'ATERRIZAJE CONFIRMADO';
-            statusUI.className = 'autopilot-status landing';
+            statusUI.innerText = 'LEVITACIÓN AUTO';
+            statusUI.className = 'autopilot-status';
         }
     }
   }
 
   updateLanded(delta, keys) {
-    // Cuando está aterrizado, la nave está anclada al suelo.
-    
-    // Anclaje estricto al suelo
+    // "Aterrizado" = estacionamiento en levitación (piloto automático mantiene altura)
+    if (!this.hoverPlanet) return;
+
+    // Anclar la nave a la rotación del planeta (si no, el terreno se desliza debajo
+    // y la nave "salta" siguiendo las lomas que van pasando)
+    const planetRotDelta = 0.005 * delta;
+    this.mesh.position.sub(this.hoverPlanet.group.position);
+    this.mesh.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), planetRotDelta);
+    this.mesh.position.add(this.hoverPlanet.group.position);
+    this.mesh.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), planetRotDelta);
+
+    this._hoverBobPhase += delta * 1.6;
+    const bob = Math.sin(this._hoverBobPhase) * 10.0; // oscilación amplia y notoria
+
     const invQuat = this.hoverPlanet.group.quaternion.clone().invert();
     const localDir = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize().applyQuaternion(invQuat);
-    
-    let terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome, true);
-    
-    // Rest on the surface
+
+    const terrainHeight = TerrainBuilder.getHeight(localDir, this.hoverPlanet.radius, this.hoverPlanet.biome, true);
     const surfaceNormal = localDir.clone().applyQuaternion(this.hoverPlanet.group.quaternion).normalize();
-    const targetPos = this.hoverPlanet.group.position.clone().add(surfaceNormal.multiplyScalar(terrainHeight + 2.5)); 
-    
-    // Aterrizaje suave (lerp) en lugar de teletransporte instantáneo
-    this.mesh.position.lerp(targetPos, delta * 3.0);
-    
-    // Alineación estricta de la nave (Nariz apunta tangencialmente, arriba es la normal)
+
+    // Separación clara del suelo + bob de levitación
+    // Un único dueño de la altura: seteo firme (lerp alto) para que se note
+    const hoverAlt = this.landedHoverOffset + bob;
+    const targetPos = this.hoverPlanet.group.position.clone().add(surfaceNormal.multiplyScalar(terrainHeight + hoverAlt));
+    this.mesh.position.lerp(targetPos, Math.min(1, delta * 8.0));
+
+    // Alineación con el terreno
     const upVector = new THREE.Vector3().subVectors(this.mesh.position, this.hoverPlanet.group.position).normalize();
     const shipForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion);
     const right = new THREE.Vector3().crossVectors(shipForward, upVector).normalize();
     const correctedForward = new THREE.Vector3().crossVectors(upVector, right).normalize();
-    
-    const targetRotation = new THREE.Matrix4().lookAt(new THREE.Vector3(0,0,0), correctedForward, upVector);
+    const targetRotation = new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), correctedForward, upVector);
     this.mesh.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(targetRotation), 0.1);
+
+    // Efecto visual: halo + motores en idle de sustentación
+    if (this.hoverPad) {
+      this.hoverPad.visible = true;
+      const pulse = 0.45 + 0.25 * Math.sin(this._hoverBobPhase * 1.4);
+      this.hoverPad.material.opacity = pulse;
+      const padScale = 0.95 + 0.12 * Math.sin(this._hoverBobPhase * 2.1);
+      this.hoverPad.scale.set(padScale, padScale, padScale);
+    }
+    this.flameScale = 0.55 + 0.15 * Math.sin(this._hoverBobPhase * 2.0);
+    this.updateParticles(delta, this.flameScale, 0x44ccff);
+
+    const statusUI = document.getElementById('autopilot-status');
+    if (statusUI && statusUI.innerText !== 'LEVITACIÓN AUTO') {
+      statusUI.innerText = 'LEVITACIÓN AUTO';
+      statusUI.className = 'autopilot-status';
+    }
   }
 
   updateHover(delta, keys) {
@@ -660,6 +717,10 @@ export class Spaceship {
       this.isLanded = false;
       this.hoverPlanet = null;
       this.canAutoAnchor = false;
+      if (this.hoverPad) {
+        this.hoverPad.visible = false;
+        this.hoverPad.material.opacity = 0;
+      }
       
       // Manual flight takeoff (raising the nose with pointer)
       this.speed = Math.max(this.speed, 1000); 
