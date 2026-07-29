@@ -159,6 +159,55 @@ export class GameAudio {
     atmoLp.connect(this._atmoGain);
     atmoNoise.start();
 
+    // --- Biome beds (wind / forest / rain) ---
+    this._biomeGain = ctx.createGain();
+    this._biomeGain.gain.value = 0.0001;
+    this._biomeGain.connect(this.ambBus);
+    this._biomeLevelSmooth = 0.001;
+
+    // Wind: filtered noise, brighter
+    const windNoise = ctx.createBufferSource();
+    windNoise.buffer = this._makeNoiseBuffer(1.4);
+    windNoise.loop = true;
+    this._windFilter = ctx.createBiquadFilter();
+    this._windFilter.type = 'bandpass';
+    this._windFilter.frequency.value = 900;
+    this._windFilter.Q.value = 0.4;
+    this._windGain = ctx.createGain();
+    this._windGain.gain.value = 0.0001;
+    windNoise.connect(this._windFilter);
+    this._windFilter.connect(this._windGain);
+    this._windGain.connect(this._biomeGain);
+    windNoise.start();
+
+    // Soft “birds / forest” chirp bed (very quiet modulated tones)
+    this._lifeGain = ctx.createGain();
+    this._lifeGain.gain.value = 0.0001;
+    this._lifeGain.connect(this._biomeGain);
+    const lifeOsc = ctx.createOscillator();
+    lifeOsc.type = 'sine';
+    lifeOsc.frequency.value = 880;
+    const lifeTone = ctx.createGain();
+    lifeTone.gain.value = 0.04;
+    lifeOsc.connect(lifeTone);
+    lifeTone.connect(this._lifeGain);
+    lifeOsc.start();
+    this._lifeOsc = lifeOsc;
+
+    // Rain hiss
+    const rainNoise = ctx.createBufferSource();
+    rainNoise.buffer = this._makeNoiseBuffer(1.0);
+    rainNoise.loop = true;
+    const rainHp = ctx.createBiquadFilter();
+    rainHp.type = 'highpass';
+    rainHp.frequency.value = 2200;
+    this._rainGain = ctx.createGain();
+    this._rainGain.gain.value = 0.0001;
+    rainNoise.connect(rainHp);
+    rainHp.connect(this._rainGain);
+    this._rainGain.connect(this._biomeGain);
+    rainNoise.start();
+
     // --- Engine: muted sine/triangle hum (smooth, not blender) ---
     this._engineGain = ctx.createGain();
     this._engineGain.gain.value = 0.0001;
@@ -259,7 +308,7 @@ export class GameAudio {
   }
 
   /**
-   * @param {{ mode: string, speed: number, nearPlanet: boolean, landed: boolean, flameScale?: number }} state
+   * @param {{ mode: string, speed: number, nearPlanet: boolean, landed: boolean, flameScale?: number, biome?: string, altitude?: number, weather?: number, onFoot?: boolean }} state
    */
   updateAmbient(state = {}) {
     if (!this._ambStarted || !this.ctx) return;
@@ -269,7 +318,11 @@ export class GameAudio {
     const speed = Math.abs(state.speed || 0);
     const nearPlanet = !!state.nearPlanet;
     const landed = !!state.landed;
+    const onFoot = !!state.onFoot;
     const flame = Math.max(0, state.flameScale ?? 0.3);
+    const biome = state.biome || 'Terran';
+    const altitude = state.altitude ?? 0;
+    const weather = Math.max(0, Math.min(1, state.weather ?? 0));
 
     const now = this.ctx.currentTime;
 
@@ -277,35 +330,70 @@ export class GameAudio {
     let spaceTarget = nearPlanet ? 0.04 : 0.09;
     let atmoTarget = 0.0001;
     if (nearPlanet) {
-      atmoTarget = landed ? 0.05 : (mode === 'HOVER' ? 0.07 : 0.04);
+      atmoTarget = landed || onFoot ? 0.055 : (mode === 'HOVER' ? 0.07 : 0.04);
     }
 
-    // Engine: mostly flame/speed but capped and heavily smoothed — no blender
     const speedNorm = Math.min(1, speed / 40000);
     const flameNorm = Math.min(1, flame / 3);
     let engineTarget = 0.015 + speedNorm * 0.06 + flameNorm * 0.05;
-    if (landed) engineTarget = 0.028;
+    if (landed && !onFoot) engineTarget = 0.028;
+    if (onFoot) engineTarget = 0.004;
     if (mode === 'HOVER' && !landed) engineTarget = Math.max(engineTarget, 0.03);
     engineTarget = Math.min(0.09, engineTarget);
 
-    const engineHzTarget = landed
+    const engineHzTarget = landed || onFoot
       ? 52
-      : 50 + speedNorm * 35 + flameNorm * 25; // stays low & smooth
+      : 50 + speedNorm * 35 + flameNorm * 25;
 
-    let musicTarget = nearPlanet ? (landed ? 0.11 : 0.09) : 0.13;
+    let musicTarget = nearPlanet ? (landed || onFoot ? 0.1 : 0.09) : 0.13;
 
-    // Smooth in JS so WebAudio isn't slammed with hard jumps
+    // Biome / weather beds
+    let biomeTarget = 0.0001;
+    let windTarget = 0.0001;
+    let lifeTarget = 0.0001;
+    let rainTarget = 0.0001;
+    if (nearPlanet) {
+      biomeTarget = 0.08 + weather * 0.12;
+      if (biome === 'Terran') {
+        windTarget = 0.04 + Math.min(1, altitude / 12000) * 0.12 + weather * 0.1;
+        lifeTarget = (onFoot || landed) && altitude < 3500 ? 0.06 : 0.02;
+        rainTarget = weather * 0.22;
+      } else if (biome === 'Ice') {
+        windTarget = 0.1 + weather * 0.05;
+        lifeTarget = 0.005;
+      } else if (biome === 'Desert') {
+        windTarget = 0.08;
+      } else if (biome === 'Toxic') {
+        windTarget = 0.06;
+        rainTarget = 0.1 + weather * 0.1;
+      } else if (biome === 'Lava') {
+        windTarget = 0.05;
+        lifeTarget = 0;
+      }
+      if (this._windFilter) {
+        this._windFilter.frequency.setTargetAtTime(700 + altitude * 0.04 + weather * 400, now, 0.6);
+      }
+      if (this._lifeOsc) {
+        this._lifeOsc.frequency.setTargetAtTime(880, now, 1.0);
+      }
+    }
+
     const lerp = (a, b, t) => a + (b - a) * t;
     this._engineLevelSmooth = lerp(this._engineLevelSmooth, engineTarget, 0.08);
     this._engineHzSmooth = lerp(this._engineHzSmooth, engineHzTarget, 0.06);
     this._spaceLevelSmooth = lerp(this._spaceLevelSmooth, spaceTarget, 0.05);
     this._atmoLevelSmooth = lerp(this._atmoLevelSmooth, atmoTarget, 0.05);
     this._musicLevelSmooth = lerp(this._musicLevelSmooth, musicTarget, 0.04);
+    this._biomeLevelSmooth = lerp(this._biomeLevelSmooth || 0, biomeTarget, 0.06);
 
     this._spaceGain.gain.setTargetAtTime(this._spaceLevelSmooth, now, 0.5);
     this._atmoGain.gain.setTargetAtTime(this._atmoLevelSmooth, now, 0.5);
     this._engineGain.gain.setTargetAtTime(this._engineLevelSmooth, now, 0.45);
     this._musicGain.gain.setTargetAtTime(this._musicLevelSmooth, now, 0.8);
+    if (this._biomeGain) this._biomeGain.gain.setTargetAtTime(this._biomeLevelSmooth, now, 0.6);
+    if (this._windGain) this._windGain.gain.setTargetAtTime(windTarget, now, 0.7);
+    if (this._lifeGain) this._lifeGain.gain.setTargetAtTime(lifeTarget, now, 0.9);
+    if (this._rainGain) this._rainGain.gain.setTargetAtTime(rainTarget, now, 0.5);
 
     if (this._engineOsc) {
       this._engineOsc.frequency.setTargetAtTime(this._engineHzSmooth, now, 0.4);

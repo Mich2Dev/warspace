@@ -11,17 +11,17 @@ export class GrassManager {
         this.planetGroup = planetGroup;
         this.planetRadius = planetRadius;
 
-        // Cobertura amplia, densidad pensada para 60fps + matas legibles
+        // Cobertura amplia, densidad pensada para 60fps + suelo vivo cerca
         this.gridSize = 24;
-        this.cellSize = 4200;
+        this.cellSize = 3800;
         this.halfGrid = Math.floor(this.gridSize / 2);
-        this.perCell = 48; // ~27k matas (antes ~86k)
+        this.perCell = 48; // densidad vs FPS
         this.total = this.gridSize * this.gridSize * this.perCell;
 
-        // Bajo hover (~90): se ve volumen sin meterse en la nave
-        this.bladeScale = 28.0;
-        this.lift = 2.0;
-        this.viewDist = 90000;
+        // Hierba visible cerca del piloto, sin matar el FPS
+    this.bladeScale = 22;
+    this.lift = 2.5;
+    this.viewDist = 55000;
 
         // Geometría 3D: manojos reales, costo GPU controlado
         const bladeCount = 9;
@@ -90,7 +90,7 @@ export class GrassManager {
         // Material sólido sin transparencia (máximo rendimiento y nitidez)
         const mat = new THREE.MeshStandardMaterial({
             color: 0xffffff,
-            side: THREE.DoubleSide,
+            side: THREE.FrontSide, // evita triángulos negros del reverso
             roughness: 0.9,
             metalness: 0.0,
         });
@@ -101,7 +101,7 @@ export class GrassManager {
         this.uniforms = {
             uTime: globalTerrainUniforms.time,
             uPlayerPos: { value: new THREE.Vector3() },
-            uPlayerRadius: { value: 1500.0 } 
+            uPlayerRadius: { value: 280.0 } // empuje alrededor del piloto grande 
         };
 
         mat.onBeforeCompile = (shader) => {
@@ -130,7 +130,7 @@ export class GrassManager {
                 // Frente de ráfaga que viaja por el terreno (onda grande y lenta)
                 float gustWave = sin(uTime * 0.4 + worldInstPos.x * 0.00035 + worldInstPos.z * 0.00028);
                 float gust = 0.5 + 0.5 * gustWave;            // 0..1
-                float windStrength = 0.06 + gust * 0.28;      // calma -> ráfaga marcada
+                float windStrength = 0.03 + gust * 0.12;      // viento suave (antes se veía “sucio”)
                 float sway = sin(uTime * 1.6 + randSeed * 6.28);
                 float windX = (sin(uTime * 0.8 + randSeed) * 0.35 + sway * 0.25) * windStrength;
                 float windZ = (cos(uTime * 0.7 + randSeed) * 0.35 + sway * 0.20) * windStrength;
@@ -334,22 +334,23 @@ export class GrassManager {
         this.forward.crossVectors(n, this.right).normalize();
     }
 
-    /** Meadow clusters — Creates natural clearings and dense patches synced with trees AND lakes */
+    /** Meadows: coasts, forests, and open plains — sparse only on high rock */
     patchOk(dir, elev) {
-        const isNearWater = (elev > -28.0 && elev < 100.0); // Costas húmedas y riberas bajas
-        
-        // El mismo ruido que usamos para agrupar los árboles en PlanetDecorator.js
-        const clusterNoise = getNoise(dir.x * 2, dir.y * 2, dir.z * 2); 
-        const isForest = (clusterNoise >= 0.4);
-        
-        if (isNearWater || isForest) {
-            // Micro ruido para claros naturales dentro del pastizal
+        if (elev > 4200) return false; // alpine rock / snow — no carpet
+
+        const isNearWater = (elev > -28.0 && elev < 140.0);
+        const clusterNoise = getNoise(dir.x * 2, dir.y * 2, dir.z * 2);
+        const isForest = (clusterNoise >= 0.35);
+        const isPlains = (elev < 2800 && clusterNoise > -0.15);
+
+        if (isNearWater || isForest || isPlains) {
             const micro = getNoise(dir.x * 25, dir.y * 25, dir.z * 25);
-            if (micro > 0.85) return false; 
+            if (micro > 0.88) return false; // natural clearings
+            // Thinner meadows on mid slopes
+            if (elev > 2200 && micro > 0.55) return false;
             return true;
         }
-        
-        return false; // Sin agua y sin bosque = llanura desierta o montaña pelada
+        return false;
     }
 
     update(worldCamPos) {
@@ -487,10 +488,10 @@ export class GrassManager {
             this.dummy.updateMatrix();
             this.mesh.setMatrixAt(id, this.dummy.matrix);
             
-            // Luciérnagas raras (~6%) — ambiente, no lluvia de bloom
-            if (Math.random() > 0.94) {
-                this.dummy.position.add(this._dir.clone().multiplyScalar(this.bladeScale * 0.12 + Math.random() * 6.0));
-                this.dummy.scale.set(1.1, 1.1, 1.1);
+            // Luciérnagas muy raras — a pie se veían como “sucio” flotando
+            if (Math.random() > 0.985) {
+                this.dummy.position.add(this._dir.clone().multiplyScalar(this.bladeScale * 0.4 + Math.random() * 8.0));
+                this.dummy.scale.set(0.55, 0.55, 0.55);
                 this.dummy.updateMatrix();
                 this.fireflyMesh.setMatrixAt(id, this.dummy.matrix);
             } else {

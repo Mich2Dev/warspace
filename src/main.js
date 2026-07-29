@@ -13,6 +13,8 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { GalaxyBuilder } from './GalaxyBuilder.js';
 import { Skybox } from './Skybox.js';
 import { gameAudio } from './GameAudio.js';
+import { WeatherSystem } from './WeatherSystem.js';
+import { SurfaceWalker } from './SurfaceWalker.js';
 
 // Setup Keybindings Configuration
 const defaultKeys = {
@@ -160,6 +162,24 @@ galaxyGroup.visible = false; // Solo visible en modo mapa galáctico
 const localMapCamera = new THREE.OrthographicCamera(-5000, 5000, 5000, -5000, 0.1, 50000);
 
 let isMapMode = false;
+const mapVisibilitySnapshot = new Map();
+
+function restoreMapVisibility() {
+  for (const [object, wasVisible] of mapVisibilitySnapshot) {
+    if (object?.parent) object.visible = wasVisible;
+  }
+  mapVisibilitySnapshot.clear();
+}
+
+function hideLocalSceneForGalaxyMap() {
+  restoreMapVisibility();
+  for (const child of scene.children) {
+    if (child === galaxyGroup) continue;
+    mapVisibilitySnapshot.set(child, child.visible);
+    child.visible = false;
+  }
+}
+
 // Ensure legacy lighting so PointLight doesn't decay to zero over 300,000 units
 renderer.useLegacyLights = true;
 if (renderer.useLegacyLights === undefined) {
@@ -401,6 +421,7 @@ function addRemotePlayer(id, data) {
 // ==========================================
 
 // Add stars (Massive spread to cover the gigantic solar system)
+let legacyStars = null;
 function createStars() {
   const geometry = new THREE.BufferGeometry();
   const vertices = [];
@@ -414,11 +435,20 @@ function createStars() {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
   // Size 1 instead of 2 to prevent huge squares on high DPI screens
   // Color más oscuro para que el Bloom no las convierta en una plasta blanca
-  const material = new THREE.PointsMaterial({ color: 0x444444, size: 1, sizeAttenuation: false });
-  const stars = new THREE.Points(geometry, material);
-  scene.add(stars);
+  const material = new THREE.PointsMaterial({ color: 0x444444, size: 1, sizeAttenuation: false, transparent: true, opacity: 1 });
+  legacyStars = new THREE.Points(geometry, material);
+  scene.add(legacyStars);
 }
 createStars();
+
+function setStarFieldOpacity(opacity) {
+  const o = THREE.MathUtils.clamp(opacity, 0, 1);
+  if (skybox) skybox.setOpacity(o);
+  if (legacyStars) {
+    legacyStars.material.opacity = o;
+    legacyStars.visible = o > 0.02;
+  }
+}
 
 // Space Dust
 const dustGeometry = new THREE.BufferGeometry();
@@ -438,6 +468,9 @@ for (let i = 0; i < 2000; i++) {
 
 // Initialize Spaceship
 const spaceship = new Spaceship(scene, camera);
+const weatherSystem = new WeatherSystem(scene);
+const surfaceWalker = new SurfaceWalker(scene, camera);
+let immersionWeather = 0;
 
 // Iniciar Controles Móviles (Si está en celular)
 const mobileController = new MobileController(spaceship);
@@ -579,10 +612,24 @@ window.addEventListener('keydown', (e) => {
   }
 
   keys[e.code] = true; 
-  if (e.code === window.GameConfig.keys.land && spaceship.mode === 'HOVER') {
-     spaceship.toggleLanding();
+  // L / E: aterrizar y bajar a pie (más tolerante)
+  if (e.code === window.GameConfig.keys.land || e.code === 'KeyE') {
+    if (spaceship.mode === 'HOVER' || spaceship.onFoot || surfaceWalker.active) {
+      if (surfaceWalker.active || spaceship.onFoot) {
+        surfaceWalker.tryToggle(spaceship, keys);
+      } else if (spaceship.isLanded) {
+        surfaceWalker.tryToggle(spaceship, keys);
+      } else if (e.code === window.GameConfig.keys.land) {
+        spaceship.toggleLanding();
+      } else if (e.code === 'KeyE' && spaceship.hoverPlanet) {
+        // E en hover: aterriza y baja en un paso
+        spaceship.toggleLanding();
+        surfaceWalker.tryToggle(spaceship, keys);
+      }
+    }
   }
-  if (e.code === window.GameConfig.keys.map) {
+  if (e.code === window.GameConfig.keys.map && !e.repeat) {
+    e.preventDefault();
     isMapMode = !isMapMode;
     if (isMapMode) {
       document.exitPointerLock();
@@ -595,14 +642,7 @@ window.addEventListener('keydown', (e) => {
       document.getElementById('map-mode-label').style.display = 'block';
       document.getElementById('map-mode-label').innerText = 'MAPA: SISTEMA SOLAR | [G] = VISTA GALÁCTICA';
     } else {
-      // Si estábamos en el mapa de la galaxia, restauramos los objetos locales antes de salir
-      if (galaxyGroup.visible) {
-        scene.children.forEach(child => {
-          if (child !== galaxyGroup && child.userData.wasVisible !== undefined) {
-            child.visible = child.userData.wasVisible;
-          }
-        });
-      }
+      restoreMapVisibility();
       
       document.body.requestPointerLock();
       document.body.style.cursor = 'default';
@@ -623,19 +663,15 @@ window.addEventListener('keydown', (e) => {
   }
   
   // Toggle Galaxy View (only while in map mode)
-  if (e.code === 'KeyG' && isMapMode) {
+  if (e.code === 'KeyG' && isMapMode && !e.repeat) {
+    e.preventDefault();
     const isGalaxyView = galaxyGroup.visible;
     if (!isGalaxyView) {
       // Switch to Galaxy View
       galaxyGroup.visible = true;
       
-      // Hide all local solar system objects (planets, ship, sun, etc.)
-      scene.children.forEach(child => {
-        if (child !== galaxyGroup) {
-          child.userData.wasVisible = child.visible;
-          child.visible = false;
-        }
-      });
+      // Snapshot exacto; evita dejar cielo/nave/planetas ocultos al salir.
+      hideLocalSceneForGalaxyMap();
       
       // Position galaxy map camera high above to see the whole galaxy disk
       mapCamera.position.set(0, 250000000, 50000000);
@@ -648,12 +684,7 @@ window.addEventListener('keydown', (e) => {
       // Back to Solar System View
       galaxyGroup.visible = false;
       
-      // Restore all local solar system objects
-      scene.children.forEach(child => {
-        if (child !== galaxyGroup && child.userData.wasVisible !== undefined) {
-          child.visible = child.userData.wasVisible;
-        }
-      });
+      restoreMapVisibility();
       
       mapCamera.position.set(0, 250000000, 0);
       mapCamera.up.set(0, 0, -1);
@@ -714,6 +745,11 @@ const lockOnUI = document.getElementById('lock-on-ui');
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault(); // Prevent right click menu
   if (!document.pointerLockElement) return;
+  if (spaceship.onFoot || surfaceWalker.active) {
+    lockedTarget = null;
+    if (lockOnUI) lockOnUI.style.display = 'none';
+    return;
+  }
   
   // Find closest enemy to center of screen to lock on
   let bestTarget = null;
@@ -741,7 +777,7 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 function fireLaser() {
-  if (spaceship.isDead || spaceship.mode !== 'FLIGHT') return;
+  if (spaceship.isDead || spaceship.mode !== 'FLIGHT' || spaceship.onFoot || surfaceWalker.active) return;
   const now = Date.now();
   if (now - lastFireTime < 150) return; // Fire rate limit (150ms)
   lastFireTime = now;
@@ -916,12 +952,17 @@ document.addEventListener('mousemove', (e) => {
       document.body.style.cursor = 'crosshair';
     }
   } else if (document.pointerLockElement === document.body) {
-    spaceship.onMouseMove(e.movementX, e.movementY);
+    if (surfaceWalker.active) {
+      surfaceWalker.onMouseMove(e.movementX, e.movementY);
+    } else {
+      spaceship.onMouseMove(e.movementX, e.movementY);
+    }
   }
 });
 document.addEventListener('wheel', (e) => {
   if (document.pointerLockElement === document.body) {
-    spaceship.onScroll(e.deltaY);
+    if (surfaceWalker.active) surfaceWalker.onScroll(e.deltaY);
+    else spaceship.onScroll(e.deltaY);
   }
 });
 
@@ -1051,6 +1092,10 @@ function animate() {
     }
 
     // === Update Ship & Camera (After gravity moves the ship) ===
+    // Si el estado a pie quedó a medias, recuperar la nave
+    if (spaceship.onFoot && !surfaceWalker.active) {
+      spaceship.onFoot = false;
+    }
     if (isPointerLocked || mobileController.isMobile) {
       spaceship.update(delta, activeKeys);
     } else {
@@ -1232,6 +1277,7 @@ function animate() {
       spaceship.mesh.position.add(deltaPos);
       spaceship.camera.position.add(deltaPos); // Prevent camera lagging behind the moving ship
     }
+    // El caminante es hijo de planet.group → órbita/spin se heredan solos.
 
     // 3. Collision Detection — prefer cheap math; raycast only when very close to surface
     const distToPlanet = spaceship.mesh.position.distanceTo(p.group.position);
@@ -1300,6 +1346,13 @@ function animate() {
     }
   }
   
+  // A pie: DESPUÉS de orbitas/spin, con teclas globales (activeKeys vive
+  // solo dentro de !isMapMode y aquí reventaba el frame → “se pegó”).
+  if (!isMapMode && surfaceWalker.active) {
+    const walkKeys = mobileController.isMobile ? mobileController.keys : keys;
+    surfaceWalker.update(delta, walkKeys);
+  }
+
   // Apply Re-entry Shield visual effect and camera shake
   if (spaceship.shieldUniforms) {
       spaceship.shieldUniforms.intensity.value = THREE.MathUtils.lerp(
@@ -1318,7 +1371,7 @@ function animate() {
   }
   
   // Update Galaxy Skybox
-  skybox.update(universalTime);
+  skybox.update(universalTime, camera.position);
   
   // Update Sparks
   for (let i = activeSparks.length - 1; i >= 0; i--) {
@@ -1378,7 +1431,7 @@ function animate() {
     
     planets.forEach(p => {
       // Pass both position (for proximity LOD) and speed (for Velocity-Based LOD)
-      p.update(spaceship.mesh.position, spaceship.speed);
+      p.update(spaceship.mesh.position, spaceship.speed, delta);
       
       const d = spaceship.mesh.position.distanceTo(p.group.position);
       if (d < minDist) {
@@ -1387,56 +1440,73 @@ function animate() {
       }
     });
     
-    // Dynamic Volumetric Atmosphere
+    // Atmósfera: cielo siempre claro (sin ciclo día/noche)
     if (closestPlanet) {
         const alt = minDist - closestPlanet.radius;
-        // 18% del radio = misma cáscara visual (Planet ATMO_SHELL 1.18). Antes 5% y las cumbres se salían del cielo.
         const atmLimit = closestPlanet.radius * 0.18;
         
         if (alt < atmLimit) {
-            // Factor de fusión: 0 = espacio profundo, 1 = suelo
-            // Suaviza la salida: el cielo se mantiene más tiempo al subir
             const t = THREE.MathUtils.clamp(Math.max(0, alt) / atmLimit, 0.0, 1.0);
-            const blend = 1.0 - t * t; // quadratic falloff — thick mid-atmosphere feel
+            const blend = 1.0 - t * t;
             
-            // Calculamos color del cielo. Más suave y luminoso en la superficie.
             const fogColor = new THREE.Color(closestPlanet.color).multiplyScalar(0.7);
-            if (closestPlanet.biome === 'Terran') {
-                fogColor.setHex(0x55aaff); // Cielo azul clásico para la tierra
-            }
+            if (closestPlanet.biome === 'Terran') fogColor.setHex(0x6eb6ff);
+            if (closestPlanet.biome === 'Toxic') fogColor.lerp(new THREE.Color(0x88ff44), 0.25);
+            if (closestPlanet.biome === 'Lava') fogColor.lerp(new THREE.Color(0xff4400), 0.2);
             
-            // Transición de niebla: más lejos en superficie para que el valle no “acabe” en el cielo al instante
-            const fogNear = THREE.MathUtils.lerp(closestPlanet.radius, 2000, blend);
-            const fogFar = THREE.MathUtils.lerp(closestPlanet.radius * 2.2, 120000, blend);
+            const fogNear = THREE.MathUtils.lerp(closestPlanet.radius * 0.15, 800, blend);
+            const fogFar = THREE.MathUtils.lerp(closestPlanet.radius * 1.6, 70000, blend);
             
             scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
-            scene.background = fogColor.clone().multiplyScalar(blend); // El fondo se vuelve el cielo
-            
-            if (skybox) {
-                skybox.setOpacity(1.0 - blend); // Desvanecer estrellas
-            }
+            scene.background = fogColor.clone().multiplyScalar(0.85 + blend * 0.15);
+            setStarFieldOpacity(1.0 - blend);
+
+            // Luz fija y brillante en superficie
+            ambientLight.intensity = 0.55;
+            starlight.intensity = 0.5;
+            starlight.color.setHex(0xbfd8ff);
+            sunLight.intensity = 5.0;
         } else {
             scene.fog = null;
             scene.background = new THREE.Color(0x000000);
-            if (skybox) {
-                skybox.setOpacity(1.0);
-            }
+            setStarFieldOpacity(1.0);
+            ambientLight.intensity = 0.5;
+            starlight.intensity = 0.45;
+            starlight.color.setHex(0xbfd8ff);
+            sunLight.intensity = 5.0;
         }
+
+        const nearSurface = alt < closestPlanet.radius * 0.08;
+        weatherSystem.update(delta, camera, {
+          inAtmo: alt < atmLimit,
+          altitude: alt,
+          biome: closestPlanet.biome,
+          nearSurface,
+          onFoot: !!spaceship.onFoot || surfaceWalker.active
+        });
+        immersionWeather = weatherSystem.intensity;
     } else {
         scene.fog = null;
         scene.background = new THREE.Color(0x000000);
+        setStarFieldOpacity(1.0);
+        weatherSystem.update(delta, camera, { inAtmo: false });
     }
 
     // Ambiente sonoro (throttle ~5Hz — no saturar el audio thread)
     if (time - lastAmbientAudioTick > 0.2) {
       lastAmbientAudioTick = time;
       const nearPlanet = !!(closestPlanet && (minDist - closestPlanet.radius) < closestPlanet.radius * 0.08);
+      const altAudio = closestPlanet ? (minDist - closestPlanet.radius) : 0;
       gameAudio.updateAmbient({
         mode: spaceship.mode,
         speed: spaceship.speed,
         nearPlanet,
         landed: !!spaceship.isLanded,
-        flameScale: spaceship.flameScale || 0
+        onFoot: !!spaceship.onFoot,
+        flameScale: spaceship.flameScale || 0,
+        biome: closestPlanet?.biome || 'Terran',
+        altitude: altAudio,
+        weather: immersionWeather
       });
     }
 
@@ -1453,19 +1523,21 @@ function animate() {
     composer.render();
   }
 
-  // HUD Local Surface Minimap Rendering (Only in HOVER mode)
+  // HUD Local Surface Minimap (hover o a pie)
   if (!isMapMode && spaceship.mode === 'HOVER' && spaceship.hoverPlanet) {
     document.getElementById('minimap-border').style.display = 'block';
 
-    // Position orthographic camera above ship looking down
-    // The surface normal is the vector from planet center to ship
-    const surfaceNormal = new THREE.Vector3().subVectors(spaceship.mesh.position, spaceship.hoverPlanet.group.position).normalize();
-    localMapCamera.position.copy(spaceship.mesh.position).add(surfaceNormal.clone().multiplyScalar(20000));
-    localMapCamera.lookAt(spaceship.mesh.position);
+    const focusPos = surfaceWalker.active
+      ? surfaceWalker.getWorldPosition(new THREE.Vector3())
+      : spaceship.mesh.position;
+    const surfaceNormal = new THREE.Vector3().subVectors(focusPos, spaceship.hoverPlanet.group.position).normalize();
+    localMapCamera.position.copy(focusPos).add(surfaceNormal.clone().multiplyScalar(20000));
+    localMapCamera.lookAt(focusPos);
 
-    // Align the camera UP vector with the ship's forward vector so the map rotates as you steer
-    const shipForward = new THREE.Vector3(0, 0, -1).applyQuaternion(spaceship.mesh.quaternion).normalize();
-    localMapCamera.up.copy(shipForward);
+    const forward = surfaceWalker.active
+      ? surfaceWalker._fwd.clone().applyQuaternion(spaceship.hoverPlanet.group.quaternion).normalize()
+      : new THREE.Vector3(0, 0, -1).applyQuaternion(spaceship.mesh.quaternion).normalize();
+    localMapCamera.up.copy(forward);
 
     const size = 250; // Map size from CSS
     // Setup scissor test to only render in the top right corner
@@ -1534,13 +1606,7 @@ btnEngage.addEventListener('click', () => {
       
       // If we are in the map, auto-close the map so they see the flight!
       if (isMapMode) {
-        if (galaxyGroup.visible) {
-          scene.children.forEach(child => {
-            if (child !== galaxyGroup && child.userData.wasVisible !== undefined) {
-              child.visible = child.userData.wasVisible;
-            }
-          });
-        }
+        restoreMapVisibility();
         
         isMapMode = false;
         document.body.requestPointerLock();

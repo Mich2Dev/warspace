@@ -141,6 +141,10 @@ body {
   pointer-events: none;
   z-index: 10;
 }
+#crosshair.on-foot,
+body.exploring-on-foot #crosshair {
+  display: none !important;
+}
 #crosshair::before, #crosshair::after {
   content: '';
   position: absolute;

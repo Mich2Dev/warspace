@@ -10,6 +10,7 @@ export class RemotePlayer {
     const loader = new GLTFLoader();
     loader.load('/nave1.glb', (gltf) => {
       const model = gltf.scene;
+      model.scale.set(42, 42, 42);
       this.mesh.add(model);
     });
     

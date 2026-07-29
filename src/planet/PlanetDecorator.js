@@ -249,8 +249,9 @@ export class PlanetDecorator {
         dummy.quaternion.setFromUnitVectors(upVector, dir);
         
         // Slightly smaller / denser silhouette near the tree line
+        // Árboles ~3–5× el alto del piloto (150 u)
         const alpineShrink = elev > 3200 ? THREE.MathUtils.clamp(1.0 - (elev - 3200) / 2300, 0.55, 1.0) : 1.0;
-        const baseScale = radius * 0.00048 * alpineShrink;
+        const baseScale = radius * 0.00105 * alpineShrink;
         const scale = baseScale + noise3D(dir.x * 5, dir.y * 5, 3) * (baseScale * 0.9);
         const scaleX = scale * (0.85 + noise3D(dir.x * 20, dir.y * 20, 1) * 0.3);
         const scaleY = scale * (0.95 + noise3D(dir.x * 20, dir.y * 20, 2) * 0.9);
@@ -344,7 +345,8 @@ export class PlanetDecorator {
         dummy.position.copy(pos);
         dummy.quaternion.setFromUnitVectors(upVector, dir);
         
-        const baseScale = radius * 0.00015; 
+        // Arbustos a cintura/pecho del piloto
+        const baseScale = radius * 0.00022; 
         const scale = baseScale + noise3D(dir.x * 12, dir.y * 12, 3) * (baseScale * 0.8); 
         dummy.scale.set(scale, scale * (1.0 + Math.random()), scale);
         

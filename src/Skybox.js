@@ -21,7 +21,8 @@ export class Skybox {
         
         for(let i=0; i<baseCount; i++) {
             // Generate random points on a massive sphere
-            const r = 500000000 + Math.random() * 500000000; // Between 500M and 1B units away
+            // Siempre dentro del far plane de la cámara principal (500M).
+            const r = 120000000 + Math.random() * 80000000;
             const theta = 2 * Math.PI * Math.random();
             const phi = Math.acos(2 * Math.random() - 1);
             
@@ -56,7 +57,7 @@ export class Skybox {
         const tex = new THREE.CanvasTexture(canvas);
         
         const baseMat = new THREE.PointsMaterial({
-            size: 800000, // Size in world units (they are extremely far away)
+            size: 260000,
             map: tex,
             vertexColors: true,
             transparent: true,
@@ -74,7 +75,7 @@ export class Skybox {
         const brightColors = new Float32Array(brightCount * 3);
         
         for(let i=0; i<brightCount; i++) {
-            const r = 400000000 + Math.random() * 200000000;
+            const r = 100000000 + Math.random() * 80000000;
             const theta = 2 * Math.PI * Math.random();
             const phi = Math.acos(2 * Math.random() - 1);
             
@@ -91,7 +92,7 @@ export class Skybox {
         brightGeom.setAttribute('color', new THREE.BufferAttribute(brightColors, 3));
         
         const brightMat = new THREE.PointsMaterial({
-            size: 2500000, 
+            size: 850000,
             map: tex,
             vertexColors: true,
             transparent: true,
@@ -107,21 +108,30 @@ export class Skybox {
         
         starGroup.renderOrder = -100;
         this.scene.add(starGroup);
+        this.mesh = starGroup; // required for setOpacity (stars fade inside atmosphere)
         return starGroup;
     }
     
     setOpacity(opacity) {
         if (!this.mesh) return;
+        const o = THREE.MathUtils.clamp(opacity, 0, 1);
+        this.mesh.visible = o > 0.02;
         this.mesh.children.forEach(child => {
             if (child.material) {
-                child.material.opacity = opacity;
+                child.material.opacity = o;
                 child.material.transparent = true;
+                // Hide fully so additive stars don't show through blue sky
+                child.visible = o > 0.02;
             }
         });
     }
 
-    update(time) {
-        // Points don't need update unless we want them to twinkle, which is expensive on CPU.
-        // For realistic space, stars don't twinkle when viewed from outside an atmosphere!
+    update(time, cameraPosition = null) {
+        // La esfera de estrellas sigue a la cámara. En viajes de cientos de
+        // millones de unidades, dejarla en el origen hacía que la nave saliera
+        // fuera de ella y aparecieran sectores completamente negros.
+        if (this.mesh && cameraPosition) {
+            this.mesh.position.copy(cameraPosition);
+        }
     }
 }

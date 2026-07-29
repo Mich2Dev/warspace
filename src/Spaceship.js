@@ -6,6 +6,8 @@ export class Spaceship {
   constructor(scene, camera) {
     this.scene = scene;
     this.camera = camera;
+    this.shipVisualScale = 42;
+    this.engineScaleFactor = this.shipVisualScale / 9.5;
     
     // Create ship container
     this.mesh = new THREE.Group();
@@ -26,10 +28,9 @@ export class Spaceship {
     const loader = new GLTFLoader();
     loader.load('/nave1.glb', (gltf) => {
       const model = gltf.scene;
-      // AJUSTA EL TAMAÑO DE TU NAVE AQUÍ:
-      // Si la nave se ve muy pequeña, cambia estos 1 por números más altos (ej. 5, 5, 5)
-      // Si se ve muy grande, cámbialos por números más bajos (ej. 0.2, 0.2, 0.2)
-      model.scale.set(5.0, 5.0, 5.0); 
+      // Personaje a pie ~150 u de alto → la nave debe verse como una nave de verdad.
+      // Escala ~42 ≈ 10× el alto del piloto en longitud.
+      model.scale.setScalar(this.shipVisualScale);
       // model.rotation.y = Math.PI; // Adjust if the model is backwards
       this.mesh.add(model);
     });
@@ -169,14 +170,20 @@ export class Spaceship {
       });
     }
     
-    // Exact calibrated nozzle positions (Scaled up by 5.0)
+    // Las posiciones originales correspondían a la nave en escala 9.5.
+    // Reescalarlas evita que las flamas queden enterradas dentro del casco.
+    const engineScale = this.engineScaleFactor;
     this.nozzleSettings = [
       { pos: new THREE.Vector3(0, 0.8, 57.75), scale: 3.6 },       // Center main
       { pos: new THREE.Vector3(-7.8, 10.7, 67.5), scale: 1.8 },    // Inner Left
       { pos: new THREE.Vector3(7.8, 10.7, 67.5), scale: 1.8 },     // Inner Right
       { pos: new THREE.Vector3(-26.3, -2.9, 67.5), scale: 4.2 },   // Outer Left
       { pos: new THREE.Vector3(26.3, -2.9, 67.5), scale: 4.2 }     // Outer Right
-    ];
+    ].map(nozzle => ({
+      pos: nozzle.pos.multiplyScalar(engineScale),
+      scale: nozzle.scale * engineScale
+    }));
+    this._createEngineFlames();
     
     // Add a glowing point light to the engine (Disabled to prevent ghost flashes when camera swings)
     // this.engineLight = new THREE.PointLight(0x00aaff, 4, 150 * 2.5);
@@ -193,8 +200,8 @@ export class Spaceship {
     this.cameraBoom = new THREE.Object3D();
     this.mesh.add(this.cameraBoom);
     // Since ship is scaled up, camera must be pushed back!
-    this.cameraDistance = 90;
-    this.cameraBoom.position.set(0, 25, this.cameraDistance); // Third person view
+    this.cameraDistance = 560;
+    this.cameraBoom.position.set(0, 160, this.cameraDistance); // Third person view
     
     // Mouse input accumulators
     this.pitchAccumulator = 0;
@@ -203,10 +210,11 @@ export class Spaceship {
     this.mode = 'FLIGHT'; // 'FLIGHT' or 'HOVER'
     this.isLanded = false;
     this.hoverPlanet = null; // Planet data for anchoring
-    this.hoverHeightOffset = 90; // Altura de planeo en hover activo
-    this.landedHoverOffset = 140; // Levitación de piloto automático al "reposar" (bien visible)
+    this.hoverHeightOffset = 420; // Altura de planeo en hover activo
+    this.landedHoverOffset = 820; // Levitación — nave grande necesita clearance
     this.canAutoAnchor = true; // Prevents re-anchoring immediately after takeoff
     this._hoverBobPhase = 0;
+    this.onFoot = false; // SurfaceWalker owns camera/movement when true
 
     // Halo de levitación bajo la nave (piloto automático manteniendo altura)
     const hoverCanvas = document.createElement('canvas');
@@ -221,7 +229,7 @@ export class Spaceship {
     hctx.fillRect(0, 0, 128, 128);
     const hoverTex = new THREE.CanvasTexture(hoverCanvas);
     this.hoverPad = new THREE.Mesh(
-      new THREE.CircleGeometry(18, 32),
+      new THREE.CircleGeometry(320, 48),
       new THREE.MeshBasicMaterial({
         map: hoverTex,
         transparent: true,
@@ -232,7 +240,7 @@ export class Spaceship {
       })
     );
     this.hoverPad.rotation.x = -Math.PI / 2;
-    this.hoverPad.position.set(0, -8, 5);
+    this.hoverPad.position.set(0, -40, 20);
     this.hoverPad.visible = false;
     this.mesh.add(this.hoverPad);
     
@@ -347,6 +355,13 @@ export class Spaceship {
 
   update(delta, keys) {
     if (this.isDead) return;
+    if (this.onFoot) {
+      // Ship stays in levitation; walker handles camera + movement
+      if (this.mode === 'HOVER' && this.isLanded) {
+        this.updateLanded(delta, {});
+      }
+      return;
+    }
     if (this.mode === 'FLIGHT') {
       this.updateFlight(delta, keys);
     } else if (this.mode === 'HOVER') {
@@ -570,7 +585,76 @@ export class Spaceship {
     this.updateParticles(delta, targetFlameScale, targetFlameColor);
   }
 
+  _createEngineFlames() {
+    this.engineFlames = [];
+
+    // Cono unitario: base en la boquilla (z=0), punta hacia atrás (+Z).
+    const cone = new THREE.ConeGeometry(1, 1, 20, 1, true);
+    cone.translate(0, 0.5, 0);
+    cone.rotateX(Math.PI / 2);
+
+    const outerMaterial = new THREE.MeshBasicMaterial({
+      color: 0x168cff,
+      transparent: true,
+      opacity: 0.42,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: 0xdffaff,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+
+    for (const nozzle of this.nozzleSettings) {
+      const group = new THREE.Group();
+      group.position.copy(nozzle.pos);
+
+      const outer = new THREE.Mesh(cone, outerMaterial.clone());
+      const core = new THREE.Mesh(cone, coreMaterial.clone());
+      outer.renderOrder = 20;
+      core.renderOrder = 21;
+      outer.frustumCulled = false;
+      core.frustumCulled = false;
+      group.add(outer, core);
+      this.mesh.add(group);
+
+      this.engineFlames.push({
+        group,
+        outer,
+        core,
+        radius: nozzle.scale
+      });
+    }
+  }
+
+  _updateEngineFlames(thrust, colorHex) {
+    if (!this.engineFlames) return;
+    const visibleThrust = Math.max(0.32, thrust);
+    const pulse = 0.94 + Math.sin(performance.now() * 0.025) * 0.06;
+    const outerColor = new THREE.Color(colorHex);
+
+    for (const flame of this.engineFlames) {
+      const radius = flame.radius;
+      const length = radius * (4.5 + visibleThrust * 5.5) * pulse;
+      const width = radius * (0.7 + visibleThrust * 0.16);
+
+      flame.group.visible = thrust > 0.02;
+      flame.outer.scale.set(width, width, length);
+      flame.core.scale.set(width * 0.42, width * 0.42, length * 0.72);
+      flame.outer.material.color.copy(outerColor);
+      flame.outer.material.opacity = Math.min(0.62, 0.28 + visibleThrust * 0.08);
+      flame.core.material.opacity = Math.min(0.95, 0.72 + visibleThrust * 0.04);
+    }
+  }
+
   updateParticles(delta, targetFlameScale, targetFlameColor) {
+    this._updateEngineFlames(targetFlameScale, targetFlameColor);
+
     // Particle Engine Exhaust System
     if (targetFlameScale > 0) {
       // Spawn more particles when boosting
@@ -588,18 +672,19 @@ export class Spaceship {
           p.mesh.position.y += (Math.random() - 0.5) * nozzle.scale * 0.5;
           
           p.mesh.visible = true;
-          p.life = 0.2 + Math.random() * 0.2; // Live for 0.2 to 0.4 seconds
+          p.life = 0.28 + Math.random() * 0.28;
           p.maxLife = p.life;
           
           // Shoot backwards (+Z) with speed relative to thrust
           p.velocity.set(
-            (Math.random() - 0.5) * 5,
-            (Math.random() - 0.5) * 5,
-            40 + Math.random() * 20 + targetFlameScale * 30
+            (Math.random() - 0.5) * 12 * this.engineScaleFactor,
+            (Math.random() - 0.5) * 12 * this.engineScaleFactor,
+            (55 + Math.random() * 35 + targetFlameScale * 45) * this.engineScaleFactor
           );
           
-          p.baseScale = nozzle.scale * targetFlameScale * 0.7;
+          p.baseScale = nozzle.scale * Math.max(0.55, targetFlameScale) * 1.15;
           p.mesh.material.color.setHex(targetFlameColor);
+          p.mesh.material.opacity = 0.72;
         }
       }
     }
@@ -612,8 +697,9 @@ export class Spaceship {
         
         // Shrink and fade out as it dies
         const lifeRatio = Math.max(0, p.life / p.maxLife);
-        const scale = p.baseScale * lifeRatio;
+        const scale = p.baseScale * (0.35 + lifeRatio * 0.65);
         p.mesh.scale.set(scale, scale, scale);
+        p.mesh.material.opacity = lifeRatio * 0.72;
         
         if (p.life <= 0) {
           p.mesh.visible = false;
@@ -624,32 +710,43 @@ export class Spaceship {
 
   toggleLanding() {
     if (this.mode !== 'HOVER') return;
+    if (this.onFoot) return;
     
-    // Solo permitir aterrizar si estamos cerca del suelo y lentos
-    if (this.isLanded) {
-        // Despegar
-        this.isLanded = false;
-        if (this.hoverPad) {
-          this.hoverPad.visible = false;
-          this.hoverPad.material.opacity = 0;
-        }
-        // El lerp de updateHover se encargará de subir la nave suavemente a la altitud de vuelo.
-        
-        const statusUI = document.getElementById('autopilot-status');
-        if (statusUI) {
-            statusUI.innerText = 'DESPEGANDO';
-            setTimeout(() => { if (!this.autopilotEngaged) statusUI.innerText = ''; }, 2000);
-        }
-    } else {
-        // Aterrizar = levitación estacionaria (piloto automático)
-        this.isLanded = true;
-        this.speed = 0;
-        
-        const statusUI = document.getElementById('autopilot-status');
-        if (statusUI) {
-            statusUI.innerText = 'LEVITACIÓN AUTO';
-            statusUI.className = 'autopilot-status';
-        }
+    // Solo aterrizar con L. Despegar = mirar arriba estando aterrizado / en hover.
+    // (Antes L alternaba y, con el pitch del ratón, te lanzaba a speed 1000.)
+    if (this.isLanded) return;
+
+    this.isLanded = true;
+    this.speed = 0;
+    this.pitchAccumulator = 0;
+    this.yawAccumulator = 0;
+    
+    const statusUI = document.getElementById('autopilot-status');
+    if (statusUI) {
+        statusUI.innerText = 'LEVITACIÓN AUTO  ·  [L] o [E] bajar a pie';
+        statusUI.className = 'autopilot-status';
+    }
+  }
+
+  /** Despegue controlado desde levitación (sin el bug del acelerón). */
+  requestTakeoff(toFlight = false) {
+    if (this.onFoot || this.mode !== 'HOVER') return;
+    this.isLanded = false;
+    this.pitchAccumulator = 0;
+    if (this.hoverPad) {
+      this.hoverPad.visible = false;
+      this.hoverPad.material.opacity = 0;
+    }
+    if (toFlight) {
+      this.mode = 'FLIGHT';
+      this.hoverPlanet = null;
+      this.canAutoAnchor = false;
+      this.speed = Math.max(this.speed, 350); // suave, no 1000
+    }
+    const statusUI = document.getElementById('autopilot-status');
+    if (statusUI) {
+      statusUI.innerText = toFlight ? 'DESPEGUE' : 'HOVER';
+      statusUI.className = 'autopilot-status';
     }
   }
 
@@ -688,20 +785,31 @@ export class Spaceship {
     const targetRotation = new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), correctedForward, upVector);
     this.mesh.quaternion.slerp(new THREE.Quaternion().setFromRotationMatrix(targetRotation), 0.1);
 
-    // Efecto visual: halo + motores en idle de sustentación
+    // Efecto visual: halo suave (menos “sucio” / bloom)
     if (this.hoverPad) {
-      this.hoverPad.visible = true;
-      const pulse = 0.45 + 0.25 * Math.sin(this._hoverBobPhase * 1.4);
-      this.hoverPad.material.opacity = pulse;
-      const padScale = 0.95 + 0.12 * Math.sin(this._hoverBobPhase * 2.1);
-      this.hoverPad.scale.set(padScale, padScale, padScale);
+      if (this.onFoot) {
+        this.hoverPad.visible = false;
+        this.hoverPad.material.opacity = 0;
+      } else {
+        this.hoverPad.visible = true;
+        const pulse = 0.18 + 0.08 * Math.sin(this._hoverBobPhase * 1.4);
+        this.hoverPad.material.opacity = pulse;
+        this.hoverPad.scale.set(1, 1, 1);
+      }
     }
-    this.flameScale = 0.55 + 0.15 * Math.sin(this._hoverBobPhase * 2.0);
+    this.flameScale = this.onFoot ? 0.12 : (0.32 + 0.08 * Math.sin(this._hoverBobPhase * 2.0));
     this.updateParticles(delta, this.flameScale, 0x44ccff);
 
+    // Mirar arriba = despegar a hover (luego sigue tirando para salir a espacio)
+    if (this.pitchAccumulator > 0.08) {
+      this.requestTakeoff(false);
+      this.pitchAccumulator = 0;
+      return;
+    }
+
     const statusUI = document.getElementById('autopilot-status');
-    if (statusUI && statusUI.innerText !== 'LEVITACIÓN AUTO') {
-      statusUI.innerText = 'LEVITACIÓN AUTO';
+    if (statusUI && !statusUI.innerText.includes('A PIE') && !statusUI.innerText.includes('bajar a pie')) {
+      statusUI.innerText = 'LEVITACIÓN AUTO  ·  [L]/[E] a pie  ·  mira arriba para despegar';
       statusUI.className = 'autopilot-status';
     }
   }
@@ -711,26 +819,9 @@ export class Spaceship {
     
     const conf = window.GameConfig.keys;
     
-    // Pull the mouse up to manually raise the nose and take off!
-    if (this.pitchAccumulator > 0.03) {
-      this.mode = 'FLIGHT';
-      this.isLanded = false;
-      this.hoverPlanet = null;
-      this.canAutoAnchor = false;
-      if (this.hoverPad) {
-        this.hoverPad.visible = false;
-        this.hoverPad.material.opacity = 0;
-      }
-      
-      // Manual flight takeoff (raising the nose with pointer)
-      this.speed = Math.max(this.speed, 1000); 
-      this.pitchAccumulator = 0; 
-      
-      const statusUI = document.getElementById('autopilot-status');
-      if (statusUI) {
-        statusUI.innerText = 'STANDBY';
-        statusUI.className = 'autopilot-status';
-      }
+    // Mirar arriba con fuerza = salir a espacio (velocidad moderada)
+    if (this.pitchAccumulator > 0.08) {
+      this.requestTakeoff(true);
       return; 
     }
     

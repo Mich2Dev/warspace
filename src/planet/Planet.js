@@ -3,6 +3,7 @@ import { Quadtree } from './Quadtree.js';
 import { PlanetDecorator } from './PlanetDecorator.js';
 import { AsteroidRing } from './AsteroidRing.js';
 import { GrassManager } from './GrassManager.js';
+import { CloudLayer } from './CloudLayer.js';
 
 export class Planet {
   constructor(scene, radius, position = new THREE.Vector3(0,0,0), color = 0x339944, biome = 'Terran', hasRings = false) {
@@ -49,6 +50,16 @@ export class Planet {
         }
     }
 
+    // Soft cloud shell (Terran / Ice / Toxic / GasGiant)
+    this.cloudLayer = null;
+    if (biome === 'Terran' || biome === 'Ice' || biome === 'Toxic' || biome === 'GasGiant') {
+      try {
+        this.cloudLayer = new CloudLayer(this.group, this.radius, this.biome);
+      } catch (err) {
+        console.warn('[Planet] CloudLayer failed:', err);
+      }
+    }
+
     // Create Atmosphere — thick shell so epic peaks (up to ~6% of radius) sit well inside the sky
     // Fog / re-entry in main.js use the same ATMO_SHELL factor.
     const ATMO_SHELL = 1.18;
@@ -91,12 +102,15 @@ export class Planet {
     this.group.add(this.atmosphere);
   }
 
-  update(cameraPosition, spaceshipSpeed = 0) {
+  update(cameraPosition, spaceshipSpeed = 0, delta = 0.016) {
     for (const qt of this.quadtrees) {
       qt.update(cameraPosition, spaceshipSpeed);
     }
     if (this.grassManager) {
       this.grassManager.update(cameraPosition);
+    }
+    if (this.cloudLayer) {
+      this.cloudLayer.update(delta);
     }
   }
 }
