@@ -11,17 +11,18 @@ export class GrassManager {
         this.planetGroup = planetGroup;
         this.planetRadius = planetRadius;
 
-        // Cobertura amplia, densidad pensada para 60fps + suelo vivo cerca
-        this.gridSize = 24;
-        this.cellSize = 3800;
+        // Menos celdas / menos matas = menos lag al entrar a atmósfera
+        this.gridSize = 14;
+        this.cellSize = 4200;
         this.halfGrid = Math.floor(this.gridSize / 2);
-        this.perCell = 48; // densidad vs FPS
+        this.perCell = 36;
         this.total = this.gridSize * this.gridSize * this.perCell;
 
-        // Hierba visible cerca del piloto, sin matar el FPS
-    this.bladeScale = 22;
-    this.lift = 2.5;
-    this.viewDist = 55000;
+        // Hierba a escala de césped realista (rodilla del piloto grande)
+        this.bladeScale = 9.5;
+        this.lift = 2.0;
+        // Solo cerca de la superficie — evita el pico de lag al bajar
+        this.viewDist = 28000;
 
         // Geometría 3D: manojos reales, costo GPU controlado
         const bladeCount = 9;
@@ -314,6 +315,7 @@ export class GrassManager {
         this.anchorY = 0;
         this.cells = [];
         this.queue = [];
+        this._queued = new Set();
         let idx = 0;
         for (let gy = -this.halfGrid; gy < this.halfGrid; gy++) {
             for (let gx = -this.halfGrid; gx < this.halfGrid; gx++) {
@@ -325,11 +327,19 @@ export class GrassManager {
         this.ready = false;
         this._dir = new THREE.Vector3();
         this._tmp = new THREE.Vector3();
+        this._local = new THREE.Vector3();
+        this._camDir = new THREE.Vector3();
+        this._basisAxis = new THREE.Vector3();
+        this._cellCenter = new THREE.Vector3();
+        this._dirX = new THREE.Vector3();
+        this._dirZ = new THREE.Vector3();
         this._up = new THREE.Vector3(0, 1, 0);
     }
 
     setBasis(n) {
-        const ax = Math.abs(n.x) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+        const ax = Math.abs(n.x) > 0.9
+            ? this._basisAxis.set(0, 1, 0)
+            : this._basisAxis.set(1, 0, 0);
         this.right.crossVectors(ax, n).normalize();
         this.forward.crossVectors(n, this.right).normalize();
     }
@@ -353,22 +363,26 @@ export class GrassManager {
         return false;
     }
 
-    update(worldCamPos) {
+    update(worldCamPos, shipSpeed = 0) {
         if (this.uniforms) {
             this.uniforms.uPlayerPos.value.copy(worldCamPos);
         }
-        this.lastCamPos = worldCamPos.clone();
-
-        const local = worldCamPos.clone();
+        const local = this._local.copy(worldCamPos);
         this.planetGroup.worldToLocal(local);
 
-        const camDir = local.clone().normalize();
+        const camDir = this._camDir.copy(local).normalize();
         const surf = TerrainBuilder.getHeight(camDir, this.planetRadius, 'Terran', true);
         const alt = local.length() - surf;
 
-        if (alt > this.viewDist || alt < -800) {
+        // A alta velocidad horizontal la hierba se regenera celdas sin parar → lag.
+        // Se oculta y se deja de rellenar hasta ir más despacio.
+        if (alt > this.viewDist || alt < -800 || shipSpeed > 9000) {
             this.mesh.visible = false;
             if (this.fireflyMesh) this.fireflyMesh.visible = false;
+            if (shipSpeed > 9000) {
+                this.queue.length = 0;
+                this._queued.clear();
+            }
             return;
         }
         this.mesh.visible = true;
@@ -384,6 +398,7 @@ export class GrassManager {
                 c.absY = c.gy;
             }
             this.queue = this.cells.slice();
+            this._queued = new Set(this.queue);
             this.ready = true;
         }
 
@@ -397,7 +412,7 @@ export class GrassManager {
             this.center.addScaledVector(this.right, sx * this.cellSize);
             this.center.addScaledVector(this.forward, sy * this.cellSize);
             this.center.normalize().multiplyScalar(this.planetRadius);
-            this.setBasis(this.center.clone().normalize());
+            this.setBasis(this._camDir.copy(this.center).normalize());
 
             const minX = this.anchorX - this.halfGrid;
             const maxX = this.anchorX + this.halfGrid - 1;
@@ -410,17 +425,25 @@ export class GrassManager {
                 while (c.absX > maxX) c.absX -= this.gridSize;
                 while (c.absY < minY) c.absY += this.gridSize;
                 while (c.absY > maxY) c.absY -= this.gridSize;
-                if ((c.absX !== px || c.absY !== py) && !this.queue.includes(c)) {
+                if ((c.absX !== px || c.absY !== py) && !this._queued.has(c)) {
                     this.queue.push(c);
+                    this._queued.add(c);
                 }
             }
         }
 
-        // Carga inicial más rápida; en vuelo suave para no trabar
-        const batch = this.queue.length > 200 ? 12 : (this.queue.length > 40 ? 6 : 3);
+        // Más lento cerca = más celdas; en vuelo medio casi no regenerar
+        let batch = 1;
+        if (shipSpeed < 1500) {
+            // Planet llama este update a 10 Hz; lotes moderados llenan el
+            // campo pronto sin volver a saturar cada frame.
+            batch = this.queue.length > 80 ? 6 : (this.queue.length > 20 ? 3 : 1);
+        }
         let dirty = false;
         for (let n = 0; n < batch && this.queue.length; n++) {
-            this.fillCell(this.queue.shift());
+            const cell = this.queue.shift();
+            this._queued.delete(cell);
+            this.fillCell(cell);
             dirty = true;
         }
         if (dirty) {
@@ -433,7 +456,7 @@ export class GrassManager {
         const dx = (cell.absX - this.anchorX) * this.cellSize;
         const dy = (cell.absY - this.anchorY) * this.cellSize;
         
-        const cellCenter = this.center.clone()
+        const cellCenter = this._cellCenter.copy(this.center)
             .addScaledVector(this.right, dx)
             .addScaledVector(this.forward, dy);
 
@@ -458,8 +481,8 @@ export class GrassManager {
             
             // Calcular inclinación matemática (Slope)
             const eps = 0.005; 
-            const dirX = this._dir.clone().add(this.right.clone().multiplyScalar(eps)).normalize();
-            const dirZ = this._dir.clone().add(this.forward.clone().multiplyScalar(eps)).normalize();
+            const dirX = this._dirX.copy(this._dir).addScaledVector(this.right, eps).normalize();
+            const dirZ = this._dirZ.copy(this._dir).addScaledVector(this.forward, eps).normalize();
             const hx = TerrainBuilder.getHeight(dirX, this.planetRadius, 'Terran');
             const hz = TerrainBuilder.getHeight(dirZ, this.planetRadius, 'Terran');
             
@@ -490,7 +513,7 @@ export class GrassManager {
             
             // Luciérnagas muy raras — a pie se veían como “sucio” flotando
             if (Math.random() > 0.985) {
-                this.dummy.position.add(this._dir.clone().multiplyScalar(this.bladeScale * 0.4 + Math.random() * 8.0));
+                this.dummy.position.addScaledVector(this._dir, this.bladeScale * 0.4 + Math.random() * 8.0);
                 this.dummy.scale.set(0.55, 0.55, 0.55);
                 this.dummy.updateMatrix();
                 this.fireflyMesh.setMatrixAt(id, this.dummy.matrix);

@@ -10,7 +10,7 @@ export class AsteroidRing {
         // 1. AAA ASTEROID GEOMETRY (CPU Displaced)
         // ==========================================
         // Create a high-poly sphere and deform it using Simplex Noise to look like a real cratered asteroid
-        const geom = new THREE.IcosahedronGeometry(1, 4); // Detail level 4 = nice and round
+        const geom = new THREE.IcosahedronGeometry(1, 2);
         const posAttribute = geom.attributes.position;
         const v = new THREE.Vector3();
         
@@ -40,7 +40,7 @@ export class AsteroidRing {
             metalness: 0.1
         });
         
-        const numAsteroids = 20000;
+        const numAsteroids = 6000;
         const instancedMesh = new THREE.InstancedMesh(geom, mat, numAsteroids);
         instancedMesh.castShadow = true;
         instancedMesh.receiveShadow = true;
@@ -104,7 +104,7 @@ export class AsteroidRing {
         // ==========================================
         // 2. VOLUMETRIC STARDUST (THREE.Points)
         // ==========================================
-        const numDustParticles = 150000;
+        const numDustParticles = 30000;
         const dustGeom = new THREE.BufferGeometry();
         const dustPositions = new Float32Array(numDustParticles * 3);
         const dustColors = new Float32Array(numDustParticles * 3);

@@ -105,6 +105,13 @@
         <div id="health-text">HP: 100</div>
         <div id="health-bar"><div id="health-fill"></div></div>
       </div>
+
+      <div id="location-hud">
+        <div class="loc-title">SISTEMA SOLAR</div>
+        <div id="loc-near">Cerca: —</div>
+        <div id="loc-earth">Tierra: —</div>
+        <div id="loc-hint">M = mapa · clic planeta = destino</div>
+      </div>
       
       <div id="damage-overlay"></div>
       <div id="death-screen">HAS SIDO DESTRUIDO<br><span>Reapareciendo en 3...</span></div>
@@ -146,6 +153,14 @@
         <span class="nav-distance" id="nav-distance">0m</span>
       </div>
       <div class="bracket">]</div>
+    </div>
+
+    <!-- Guía fauna (serpiente de lava) -->
+    <div id="dragon-marker" style="display:none; position:fixed; transform:translate(-50%,-50%); pointer-events:none; z-index:15; font-family:monospace; color:#ff8a3d; text-shadow:0 0 8px #000;">
+      <div style="display:flex; align-items:center; gap:6px; background:rgba(20,6,0,0.72); border:1px solid #ff6a22; padding:4px 10px;">
+        <span style="font-size:14px; letter-spacing:1px;">◈ SERPIENTE</span>
+        <span id="dragon-distance" style="color:#ffcc88; font-size:12px;">0m</span>
+      </div>
     </div>
     
     <!-- Mobile HUD (Visible only on touch devices) -->

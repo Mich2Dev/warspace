@@ -4,6 +4,7 @@ import { PlanetDecorator } from './PlanetDecorator.js';
 import { AsteroidRing } from './AsteroidRing.js';
 import { GrassManager } from './GrassManager.js';
 import { CloudLayer } from './CloudLayer.js';
+import { LavaVapor } from './LavaVapor.js';
 
 export class Planet {
   constructor(scene, radius, position = new THREE.Vector3(0,0,0), color = 0x339944, biome = 'Terran', hasRings = false) {
@@ -11,6 +12,7 @@ export class Planet {
     this.radius = radius;
     this.color = color;
     this.biome = biome;
+    this._lodElapsed = 999;
     
     this.group = new THREE.Group();
     this.group.position.copy(position);
@@ -50,9 +52,9 @@ export class Planet {
         }
     }
 
-    // Soft cloud shell (Terran / Ice / Toxic / GasGiant)
+    // Soft cloud / ash shell
     this.cloudLayer = null;
-    if (biome === 'Terran' || biome === 'Ice' || biome === 'Toxic' || biome === 'GasGiant') {
+    if (biome === 'Terran' || biome === 'Ice' || biome === 'Toxic' || biome === 'GasGiant' || biome === 'Lava') {
       try {
         this.cloudLayer = new CloudLayer(this.group, this.radius, this.biome);
       } catch (err) {
@@ -60,41 +62,60 @@ export class Planet {
       }
     }
 
+    this.lavaVapor = null;
+    if (biome === 'Lava') {
+      try {
+        this.lavaVapor = new LavaVapor(this.group, this.radius, this.biome);
+      } catch (err) {
+        console.warn('[Planet] LavaVapor failed:', err);
+      }
+    }
+
     // Create Atmosphere — thick shell so epic peaks (up to ~6% of radius) sit well inside the sky
     // Fog / re-entry in main.js use the same ATMO_SHELL factor.
-    const ATMO_SHELL = 1.18;
-    const atmoGeometry = new THREE.SphereGeometry(this.radius * ATMO_SHELL, 64, 64);
+    const ATMO_SHELL = biome === 'Lava' ? 1.12 : 1.18;
+    const atmoGeometry = new THREE.SphereGeometry(this.radius * ATMO_SHELL, 48, 48);
     
-    // Advanced Procedural Atmospheric Fresnel Shader
+    // Fresnel atmosphere — Lava: halo caliente en el limbo, no cielo rojo sólido
     const vertexShader = `
       varying vec3 vNormal;
+      varying vec3 vWorldPos;
       void main() {
-        // Calculate normal in view space
         vNormal = normalize(normalMatrix * normal);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
       }
     `;
 
     const fragmentShader = `
       uniform vec3 color;
+      uniform vec3 horizonColor;
+      uniform float power;
+      uniform float strength;
       varying vec3 vNormal;
+      varying vec3 vWorldPos;
       void main() {
-        // View direction in view space is always (0,0,1)
         float dotNV = max(0.0, dot(vNormal, vec3(0.0, 0.0, 1.0)));
-        // Fresnel effect: transparent in center, glowing on edges
-        float intensity = pow(1.0 - dotNV, 3.5) * 1.2;
-        gl_FragColor = vec4(color, intensity);
+        float fresnel = pow(1.0 - dotNV, power) * strength;
+        // Un poco más de glow hacia el “horizonte” de la esfera
+        vec3 col = mix(color, horizonColor, fresnel);
+        gl_FragColor = vec4(col, fresnel);
       }
     `;
 
+    const isLava = biome === 'Lava';
     const atmoMaterial = new THREE.ShaderMaterial({
       uniforms: {
-        color: { value: new THREE.Color(this.color).multiplyScalar(1.5) } // Boosted brightness
+        color: { value: new THREE.Color(isLava ? 0x1a0a06 : this.color).multiplyScalar(isLava ? 1.0 : 1.5) },
+        horizonColor: { value: new THREE.Color(isLava ? 0xff7030 : this.color).multiplyScalar(isLava ? 1.4 : 1.2) },
+        power: { value: isLava ? 2.8 : 3.5 },
+        strength: { value: isLava ? 1.55 : 1.2 }
       },
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
       blending: THREE.AdditiveBlending,
-      side: THREE.FrontSide, // FrontSide for external atmospheric glow
+      side: THREE.FrontSide,
       transparent: true,
       depthWrite: false
     });
@@ -103,14 +124,36 @@ export class Planet {
   }
 
   update(cameraPosition, spaceshipSpeed = 0, delta = 0.016) {
+    // Planetas lejanos: no regenerar LOD/hierba (eso era el lag a alta velocidad)
+    const dist = cameraPosition.distanceTo(this.group.position);
+    const nearLimit = this.radius * 2.2 + 250000;
+    if (dist > nearLimit) {
+      if (this.grassManager?.mesh) this.grassManager.mesh.visible = false;
+      if (this.grassManager?.fireflyMesh) this.grassManager.fireflyMesh.visible = false;
+      if (this.decorations) this.decorations.visible = false;
+      this.cloudLayer?.setVisible(false);
+      this.lavaVapor?.setVisible(false);
+      this._lodElapsed = 999;
+      return;
+    }
+
+    if (this.decorations) this.decorations.visible = true;
+    this.cloudLayer?.setVisible(true);
+    if (this.cloudLayer) this.cloudLayer.update(delta);
+    if (this.lavaVapor) this.lavaVapor.update(cameraPosition, delta);
+
+    // El LOD no necesita recorrer todos sus nodos 60 veces por segundo.
+    // A 8–10 Hz sigue reaccionando rápido y libera CPU para física/render.
+    this._lodElapsed += delta;
+    const lodInterval = spaceshipSpeed > 5000 ? 0.16 : 0.1;
+    if (this._lodElapsed < lodInterval) return;
+    this._lodElapsed = 0;
+
     for (const qt of this.quadtrees) {
       qt.update(cameraPosition, spaceshipSpeed);
     }
     if (this.grassManager) {
-      this.grassManager.update(cameraPosition);
-    }
-    if (this.cloudLayer) {
-      this.cloudLayer.update(delta);
+      this.grassManager.update(cameraPosition, spaceshipSpeed);
     }
   }
 }

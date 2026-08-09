@@ -14,7 +14,7 @@ function mulberry32(a) {
 }
 const noise3D = createNoise3D(mulberry32(123456789)); // Semilla global fija
 export function getNoise(x, y, z) { return noise3D(x, y, z); }
-const RESOLUTION = 32; // Restored to 32 for high quality. Async Queue prevents lag anyway.
+const RESOLUTION = 22; // más densidad = menos pop al cambiar de LOD
 
 export class TerrainBuilder {
   static buildChunk(localUp, axisA, axisB, radius, center, size, color, biome = 'Terran') {
@@ -86,12 +86,20 @@ export class TerrainBuilder {
       let vColor;
       
       if (biome === 'Lava') {
-        if (heightOffset < -50) {
-           const lavaHeat = Math.min(1.0, Math.abs(heightOffset + 50) / 300.0);
-           vColor = new THREE.Color(0x220000).lerp(new THREE.Color(0xff5500), lavaHeat); // Glowing magma gradient
+        // Transición suave costa→magma (evita manchas rojas planas)
+        const shore = Math.min(1, Math.max(0, (-heightOffset - 10) / 120));
+        const deep = Math.min(1, Math.max(0, (-heightOffset - 80) / 400));
+        if (shore > 0.02) {
+          const crust = new THREE.Color(0x1a0c08);
+          const glow = new THREE.Color(0x5a1800).lerp(new THREE.Color(0xc43a00), deep);
+          vColor = crust.lerp(glow, shore * shore);
         } else {
-           const rockDarkness = Math.max(0.05, 0.2 - (heightOffset / 4000));
-           vColor = new THREE.Color(rockDarkness, rockDarkness, rockDarkness); // Very dark obsidian rock
+          // Basalto / ceniza / roca volcánica
+          const t = Math.min(1, Math.max(0, heightOffset / 2500));
+          const basalt = new THREE.Color(0x121214);
+          const ash = new THREE.Color(0x2a2420);
+          const ridge = new THREE.Color(0x3a322c);
+          vColor = basalt.lerp(ash, Math.min(1, t * 1.4)).lerp(ridge, Math.max(0, t - 0.35));
         }
       } else if (biome === 'Ice') {
          vColor = baseColorObj.clone().lerp(new THREE.Color(0xffffff), 0.5 + Math.min(1.0, Math.max(0.0, heightOffset / 1000)));
@@ -157,15 +165,17 @@ export class TerrainBuilder {
     // Assign a basic material
     const material = new THREE.MeshStandardMaterial({ 
       vertexColors: true,
-      roughness: (biome === 'Ice') ? 0.3 : (biome === 'Lava' ? 0.8 : 0.95), // More grounded realism
-      metalness: (biome === 'Ice') ? 0.1 : (biome === 'Lava' ? 0.2 : 0.0),
+      roughness: (biome === 'Ice') ? 0.3 : (biome === 'Lava' ? 0.72 : 0.95),
+      metalness: (biome === 'Ice') ? 0.1 : (biome === 'Lava' ? 0.08 : 0.0),
+      emissive: biome === 'Lava' ? new THREE.Color(0x180600) : new THREE.Color(0x000000),
+      emissiveIntensity: biome === 'Lava' ? 0.35 : 0,
       flatShading: false,
-      side: THREE.DoubleSide // AAA FIX: Prevents seeing through the planet if the camera clips
+      side: THREE.DoubleSide
     });
     
     // Must change when onBeforeCompile GLSL changes, or WebGL keeps a broken/stale program
     material.customProgramCacheKey = function() {
-        return biome + '_terrain_v2_alpine';
+        return biome + '_terrain_v5_lava_lod';
     };
     
     // Inject custom GLSL to generate procedural textures (Micro-details & Strata)
@@ -209,6 +219,7 @@ export class TerrainBuilder {
          varying vec3 vLocalPos;
          varying float vHeightOffset;
          varying vec3 vLocalNormal;
+         varying float vCamDist;
          ${noiseGLSL}
         `
       );
@@ -217,14 +228,24 @@ export class TerrainBuilder {
          `#include <begin_vertex>
           vLocalPos = position;
           vHeightOffset = length(position) - ${radius.toFixed(1)};
-          vLocalNormal = normal; // Pasa la normal suave original
+          vLocalNormal = normal;
+          {
+            vec4 _wp = modelMatrix * vec4(transformed, 1.0);
+            vCamDist = length(cameraPosition - _wp.xyz);
+          }
           
-          // Physical Vertex Waves for Terran Water
           int vBiomeType = ${(biome === 'Lava') ? 1 : (biome === 'GasGiant') ? 2 : (biome === 'Terran') ? 3 : (biome === 'Ice') ? 4 : 5};
           if (vBiomeType == 3 && vHeightOffset <= -28.0) {
-              // Organic 3D noise for physical ocean swells instead of a grid
               float physicalWave = vnoise(position * 0.003 + time * 0.5) * 6.0; 
               transformed += normalize(position) * physicalWave;
+          }
+          if (vBiomeType == 1 && vHeightOffset < -20.0) {
+              // Ondulación solo de cerca (de lejos = estática tipo TV)
+              float nearW = smoothstep(${(radius * 0.22).toFixed(1)}, ${(radius * 0.045).toFixed(1)}, vCamDist);
+              float lavaWave = vnoise(position * 0.004 + time * 0.35) * 4.5
+                            + vnoise(position * 0.012 - time * 0.55) * 1.8;
+              float depthMask = smoothstep(-15.0, -70.0, vHeightOffset);
+              transformed += normalize(position) * lavaWave * depthMask * nearW;
           }
          `
        );
@@ -237,6 +258,7 @@ export class TerrainBuilder {
            varying vec3 vLocalPos;
            varying float vHeightOffset;
            varying vec3 vLocalNormal;
+           varying float vCamDist;
            ${noiseGLSL}
          `
       );
@@ -257,24 +279,28 @@ export class TerrainBuilder {
                   vec3 waveNormal = vec3(nx - n0, 0.0, nz - n0);
                   normal = normalize(normal - waveNormal * 1.5);
               } else {
-                  // PROCEDURAL BUMP MAPPING (Tierra, Roca, Nieve)
-                  // Usamos ruido de muy alta frecuencia para simular porosidad y grietas.
                   float eps = 1.0;
-                  
-                  // FBM era demasiado pesado (4 capas x 4 veces = 16 ruidos por pixel).
-                  // OPTIMIZADO: vnoise (1 capa) reduce el GPU lag un 400% manteniendo el mismo look granular.
                   float n0 = vnoise(vLocalPos * 0.08); 
                   float nx = vnoise((vLocalPos + vec3(eps, 0.0, 0.0)) * 0.08);
                   float ny = vnoise((vLocalPos + vec3(0.0, eps, 0.0)) * 0.08);
                   float nz = vnoise((vLocalPos + vec3(0.0, 0.0, eps)) * 0.08);
                   
                   vec3 bumpNormal = vec3(nx - n0, ny - n0, nz - n0);
-                  
-                  // Para evitar el costo de matrices TBN, inyectamos el ruido caótico directamente en la normal
-                  // Al ser ruido de alta frecuencia, la dependencia de la vista actúa como destellos especulares (shimmer)
-                  // muy realistas para rocas minerales y nieve.
-                  // Escala del relieve: 2.5
                   normal = normalize(normal - bumpNormal * 2.5);
+              }
+          } else if (_biomeType == 1) {
+              // Mercurio: relieve solo de cerca (órbita = limpio)
+              float nearB = smoothstep(${(radius * 0.2).toFixed(1)}, ${(radius * 0.04).toFixed(1)}, vCamDist);
+              if (nearB > 0.02) {
+                float eps = 1.5;
+                float freq = vHeightOffset < -25.0 ? 0.012 : 0.07;
+                float n0 = vnoise(vLocalPos * freq + (vHeightOffset < -25.0 ? time * 0.25 : 0.0));
+                float nx = vnoise((vLocalPos + vec3(eps, 0.0, 0.0)) * freq);
+                float ny = vnoise((vLocalPos + vec3(0.0, eps, 0.0)) * freq);
+                float nz = vnoise((vLocalPos + vec3(0.0, 0.0, eps)) * freq);
+                vec3 bumpNormal = vec3(nx - n0, ny - n0, nz - n0);
+                float bumpAmt = (vHeightOffset < -25.0 ? 1.8 : 2.8) * nearB;
+                normal = normalize(normal - bumpNormal * bumpAmt);
               }
           }
          `
@@ -358,6 +384,56 @@ export class TerrainBuilder {
                       vec3 iceGlow = vec3(0.0, 0.6, 1.0) * cracks * (1.0 + pulse * 2.0); 
                       diffuseColor.rgb += iceGlow;
                   }
+             } else if (biomeType == 1) {
+                 // --- MERCURIO / LAVA PLANET ---
+                 // De lejos: mares suaves (sin ruido fino = sin “cucuyo”)
+                 // De cerca: corteza, grietas y flujo animado
+                 float nearD = smoothstep(${(radius * 0.28).toFixed(1)}, ${(radius * 0.05).toFixed(1)}, vCamDist);
+                 float shore = smoothstep(-8.0, -55.0, vHeightOffset);
+                 float deep = smoothstep(-40.0, -180.0, vHeightOffset);
+
+                 // Vista lejana: color estable por altura + ruido MUY bajo
+                 float big = vnoise(vLocalPos * 0.00015);
+                 vec3 farRock = vec3(0.09, 0.08, 0.075) + big * 0.04;
+                 vec3 farMagma = mix(vec3(0.35, 0.08, 0.02), vec3(0.7, 0.22, 0.04), deep);
+                 vec3 farCol = mix(farRock, farMagma, shore);
+
+                 vec3 nearCol = farCol;
+                 if (nearD > 0.01) {
+                   float micro = vnoise(vLocalPos * 0.09) * 0.2;
+                   float strata = vnoise(vLocalPos * 0.0012) * 0.12;
+                   vec3 localUp = normalize(vLocalPos);
+                   float slope = abs(dot(normalize(vLocalNormal), localUp));
+
+                   vec3 basalt = vec3(0.07, 0.065, 0.06) + micro * 0.15;
+                   vec3 ash = vec3(0.16, 0.12, 0.10) + micro * 0.1;
+                   vec3 scoria = vec3(0.22, 0.12, 0.08) + strata;
+                   float ashMix = smoothstep(0.15, 0.85, n2);
+                   vec3 rockCol = mix(basalt, ash, ashMix);
+                   rockCol = mix(rockCol, scoria, (1.0 - slope) * 0.45);
+                   rockCol *= grit * 1.15;
+
+                   float flowA = fbm(vLocalPos * 0.0045 + vec3(time * 0.18, time * 0.07, -time * 0.11));
+                   float flowB = fbm(vLocalPos * 0.011 - vec3(time * 0.22, -time * 0.09, time * 0.05));
+                   float crustNoise = fbm(vLocalPos * 0.02 + flowA);
+                   float cracks = 1.0 - smoothstep(0.0, 0.07, abs(crustNoise - 0.48));
+                   float heat = smoothstep(0.35, 0.82, flowA * 0.65 + flowB * 0.35);
+                   heat = mix(heat, 1.0, cracks * 0.85);
+                   heat *= 0.55 + 0.45 * deep;
+
+                   vec3 crust = vec3(0.05, 0.025, 0.015);
+                   vec3 ember = vec3(0.55, 0.12, 0.02);
+                   vec3 bright = vec3(1.1, 0.45, 0.08);
+                   vec3 whiteHot = vec3(1.6, 1.1, 0.45);
+                   vec3 magma = mix(ember, bright, heat);
+                   magma = mix(magma, whiteHot, smoothstep(0.75, 0.95, heat) * deep);
+                   magma = mix(crust, magma, clamp(0.35 + heat * 0.75 + cracks * 0.4, 0.0, 1.0));
+                   float pulse = 0.88 + 0.12 * sin(time * 1.7 + flowA * 6.0);
+                   magma *= pulse;
+                   nearCol = mix(rockCol, magma, shore);
+                 }
+
+                 diffuseColor.rgb = mix(farCol, nearCol, nearD);
              } else {
                  diffuseColor.rgb *= grit;
              }
@@ -411,24 +487,36 @@ export class TerrainBuilder {
               float foam = smoothstep(0.4, 0.8, foamNoise) * shoreBlend;
               diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), foam);
           }
-         
-         // --- PROCEDURAL LAVA ---
-         if (biomeType == 1 && vHeightOffset < -50.0) {
-             // Animated magma flow
-             float magmaNoise = fbm(vLocalPos * 0.005 + time);
-             float heat = smoothstep(0.3, 0.7, magmaNoise);
-             
-             // HDR glowing magma colors
-             vec3 darkMagma = vec3(2.0, 0.2, 0.0);
-             vec3 hotMagma = vec3(5.0, 2.0, 0.0); // Extremely bright HDR for bloom!
-             vec3 magmaColor = mix(darkMagma, hotMagma, heat);
-             
-             // Replace vertex color entirely with procedural magma
-             diffuseColor.rgb = magmaColor;
-         }
         `
       );
       
+      shader.fragmentShader = shader.fragmentShader.replace(
+         '#include <emissivemap_fragment>',
+         `#include <emissivemap_fragment>
+          if (biomeType == 1) {
+              float nearE = smoothstep(${(radius * 0.22).toFixed(1)}, ${(radius * 0.045).toFixed(1)}, vCamDist);
+              float shoreE = smoothstep(-12.0, -70.0, vHeightOffset) * nearE;
+              if (shoreE > 0.01) {
+                  float flowE = fbm(vLocalPos * 0.005 + time * 0.15);
+                  float crackE = 1.0 - smoothstep(0.0, 0.06, abs(fbm(vLocalPos * 0.018) - 0.5));
+                  float heatE = smoothstep(0.4, 0.85, flowE) + crackE * 0.7;
+                  heatE *= shoreE;
+                  vec3 glow = mix(vec3(0.8, 0.15, 0.0), vec3(2.2, 0.9, 0.15), heatE);
+                  float pulseE = 0.75 + 0.25 * sin(time * 2.0 + flowE * 8.0);
+                  totalEmissiveRadiance += glow * heatE * pulseE * 1.6;
+              }
+              // Brillo suave lejano (sin grietas = sin cucuyo)
+              float farGlow = smoothstep(-20.0, -90.0, vHeightOffset) * (1.0 - nearE);
+              totalEmissiveRadiance += vec3(0.45, 0.12, 0.02) * farGlow * 0.35;
+              float nearShore = smoothstep(80.0, -20.0, vHeightOffset) * (1.0 - smoothstep(-20.0, -80.0, vHeightOffset)) * nearE;
+              if (nearShore > 0.05) {
+                  float vein = 1.0 - smoothstep(0.0, 0.04, abs(fbm(vLocalPos * 0.03) - 0.5));
+                  totalEmissiveRadiance += vec3(1.2, 0.25, 0.02) * vein * nearShore * 0.9;
+              }
+          }
+         `
+       );
+
       shader.fragmentShader = shader.fragmentShader.replace(
          '#include <roughnessmap_fragment>',
          `#include <roughnessmap_fragment>
@@ -436,19 +524,17 @@ export class TerrainBuilder {
               if (vHeightOffset <= -28.0) {
                   roughnessFactor = 0.05; // Agua hiper-reflectante
               } else {
-                  // Dinámica de rugosidad para tierra
                   float wetShore = 1.0 - smoothstep(-28.0, -20.0, vHeightOffset);
-                  
-                  // La nieve en lo alto también tiene cierto brillo (hielo cristalino)
                   float n1 = vnoise(vLocalPos * 0.0002);
                   float snowLine = smoothstep(5500.0, 9500.0, vHeightOffset + (n1 * 1400.0));
                   float iceLine = smoothstep(12000.0, 18000.0, vHeightOffset);
-                  
-                  // Roca/tierra mate; lodo un poco más reflectante; nieve/hielo más brillantes
                   float baseRough = mix(0.95, 0.4, wetShore);
                   roughnessFactor = mix(baseRough, 0.55, snowLine);
                   roughnessFactor = mix(roughnessFactor, 0.35, iceLine);
               }
+          } else if (biomeType == 1) {
+              float magmaAmt = smoothstep(-15.0, -90.0, vHeightOffset);
+              roughnessFactor = mix(0.92, 0.28, magmaAmt);
           }
          `
        );
@@ -458,6 +544,10 @@ export class TerrainBuilder {
          `#include <metalnessmap_fragment>
           if (biomeType == 3 && vHeightOffset <= -28.0) {
               metalnessFactor = 0.0;
+          }
+          if (biomeType == 1) {
+              float magmaAmt = smoothstep(-20.0, -100.0, vHeightOffset);
+              metalnessFactor = mix(0.05, 0.25, magmaAmt);
           }
          `
        );
@@ -497,11 +587,19 @@ export class TerrainBuilder {
     
     // Todos los planetas deberían tener continentes y valles para no verse "planos"
     if (biome === 'Lava') {
-        if (nCont < 0.3) {
-            elevation = -(baseRadius * 0.01) + nCont * (baseRadius * 0.005); // Mares de lava profundos
+        // Costas irregulares + mares menos “planos”
+        let coast = noise3D(normalizedVertex.x * freq * 3.2, normalizedVertex.y * freq * 3.2, normalizedVertex.z * freq * 3.2);
+        let coast2 = noise3D(normalizedVertex.x * freq * 7.5, normalizedVertex.y * freq * 7.5, normalizedVertex.z * freq * 7.5);
+        let seaMask = nCont + coast * 0.18 + coast2 * 0.08;
+        if (seaMask < 0.34) {
+            let depth = (0.34 - seaMask) / 0.34;
+            elevation = -(baseRadius * 0.004) - depth * depth * (baseRadius * 0.009)
+              + coast2 * (baseRadius * 0.0008); // fondo irregular
         } else {
-            let mountainMask = (nCont - 0.3) / 0.7;
-            elevation = mountainMask * nMount * (baseRadius * 0.015); // Volcanes (1.5% del radio)
+            let mountainMask = (seaMask - 0.34) / 0.66;
+            elevation = mountainMask * nMount * (baseRadius * 0.018);
+            // Mesetas de ceniza
+            elevation += Math.max(0, coast) * mountainMask * (baseRadius * 0.002);
         }
     } else if (biome === 'Ice') {
         if (nCont < 0.5) {

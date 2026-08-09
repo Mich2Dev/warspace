@@ -42,8 +42,8 @@ db.exec(`
 
 // Prepared Statements para rendimiento
 const stmtLogin = db.prepare('SELECT * FROM users WHERE username = ? AND password = ?');
-// Earth spawn coords: x=6000000, y=30000, z=0
-const stmtRegister = db.prepare('INSERT INTO users (username, password, pos_x, pos_y, pos_z) VALUES (?, ?, 6000000, 30000, 0)');
+// Earth spawn coords: órbita terrestre real (~60M), fuera del planeta
+const stmtRegister = db.prepare('INSERT INTO users (username, password, pos_x, pos_y, pos_z) VALUES (?, ?, 61250000, 80000, 0)');
 const stmtSavePos = db.prepare('UPDATE users SET pos_x = ?, pos_y = ?, pos_z = ?, rot_x = ?, rot_y = ?, rot_z = ?, rot_w = ?, hp = ?, clan_id = ? WHERE id = ?');
 const stmtGetById = db.prepare('SELECT * FROM users WHERE id = ?');
 const stmtGetByUsername = db.prepare('SELECT * FROM users WHERE username = ?');

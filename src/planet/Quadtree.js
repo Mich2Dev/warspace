@@ -1,13 +1,18 @@
 import * as THREE from 'three';
 import { TerrainBuilder } from './TerrainBuilder.js';
 
-const MAX_DEPTH = 6; // was 7 — less cascade = no freeze near surface
+const MAX_DEPTH = 5; // entrada suave: evita cascadas profundas en el hilo principal
 
 // Async chunk queue (1/frame keeps the game responsive)
 const chunkQueue = [];
 let isGenerating = false;
 const CHUNKS_PER_FRAME = 1;
-const MAX_QUEUE = 20; // hard cap so LOD never snowballs the main thread
+const MAX_QUEUE = 8; // cola corta: prioriza mantener la página interactiva
+
+// Histeresis fuerte: subdivide lejos y no fusiona hasta estar bien lejos
+// (reduce el “pop” de textura delante de la cámara).
+const SPLIT_FACTOR_BY_DEPTH = [2.4, 2.2, 2.0, 1.85, 1.7, 1.55];
+const MERGE_HYSTERESIS = 2.15;
 
 async function processChunkQueue() {
   if (isGenerating) return;
@@ -121,13 +126,13 @@ export class Quadtree {
     const distance = cameraPosition.distanceTo(this._currentWorldCenter);
     const worldSize = this.size * this.radius;
 
-    let dynamicMaxDepth = MAX_DEPTH;
-    if (spaceshipSpeed > 80000) dynamicMaxDepth = 4;
-    else if (spaceshipSpeed > 20000) dynamicMaxDepth = 5;
+    let dynamicMaxDepth = this.biome === 'GasGiant' ? 2 : MAX_DEPTH;
+    // A velocidad media ya bajamos detalle: evita regenerar chunks al pasar
+    if (spaceshipSpeed > 40000) dynamicMaxDepth = Math.min(dynamicMaxDepth, 3);
+    else if (spaceshipSpeed > 12000) dynamicMaxDepth = Math.min(dynamicMaxDepth, 4);
+    else if (spaceshipSpeed > 5000) dynamicMaxDepth = Math.min(dynamicMaxDepth, 5);
 
-    let splitFactor = 1.6;
-    if (this.depth > 3) splitFactor = 1.3;
-    if (this.depth > 5) splitFactor = 1.1;
+    let splitFactor = SPLIT_FACTOR_BY_DEPTH[Math.min(this.depth, SPLIT_FACTOR_BY_DEPTH.length - 1)];
     const splitThreshold = worldSize * splitFactor;
 
     if (this._splitPending && this.childrenReady()) {
@@ -146,7 +151,7 @@ export class Quadtree {
     // Never split if the global build queue is backed up (prevents freeze)
     if (!busy && this.isLeaf && this.mesh && this.depth < dynamicMaxDepth && distance < splitThreshold && !queueBusy()) {
       this.split();
-    } else if (!busy && !this.isLeaf && distance > splitThreshold * 1.35) {
+    } else if (!busy && !this.isLeaf && distance > splitThreshold * MERGE_HYSTERESIS) {
       this.merge();
     } else if (!busy && !this.isLeaf && this.depth >= dynamicMaxDepth) {
       this.merge();

@@ -11,7 +11,7 @@ export class Skybox {
         
         // 1. Base Stars (Small and numerous)
         const baseGeom = new THREE.BufferGeometry();
-        const baseCount = 20000;
+        const baseCount = 7000;
         const basePos = new Float32Array(baseCount * 3);
         const baseColors = new Float32Array(baseCount * 3);
         
@@ -21,8 +21,7 @@ export class Skybox {
         
         for(let i=0; i<baseCount; i++) {
             // Generate random points on a massive sphere
-            // Siempre dentro del far plane de la cámara principal (500M).
-            const r = 120000000 + Math.random() * 80000000;
+            const r = 500000000 + Math.random() * 500000000; // Between 500M and 1B units away
             const theta = 2 * Math.PI * Math.random();
             const phi = Math.acos(2 * Math.random() - 1);
             
@@ -57,7 +56,7 @@ export class Skybox {
         const tex = new THREE.CanvasTexture(canvas);
         
         const baseMat = new THREE.PointsMaterial({
-            size: 260000,
+            size: 800000, // Size in world units (they are extremely far away)
             map: tex,
             vertexColors: true,
             transparent: true,
@@ -70,12 +69,12 @@ export class Skybox {
         
         // 2. Bright Stars (Fewer, larger)
         const brightGeom = new THREE.BufferGeometry();
-        const brightCount = 2000;
+        const brightCount = 600;
         const brightPos = new Float32Array(brightCount * 3);
         const brightColors = new Float32Array(brightCount * 3);
         
         for(let i=0; i<brightCount; i++) {
-            const r = 100000000 + Math.random() * 80000000;
+            const r = 400000000 + Math.random() * 200000000;
             const theta = 2 * Math.PI * Math.random();
             const phi = Math.acos(2 * Math.random() - 1);
             
@@ -92,7 +91,7 @@ export class Skybox {
         brightGeom.setAttribute('color', new THREE.BufferAttribute(brightColors, 3));
         
         const brightMat = new THREE.PointsMaterial({
-            size: 850000,
+            size: 2500000, 
             map: tex,
             vertexColors: true,
             transparent: true,
@@ -126,12 +125,8 @@ export class Skybox {
         });
     }
 
-    update(time, cameraPosition = null) {
-        // La esfera de estrellas sigue a la cámara. En viajes de cientos de
-        // millones de unidades, dejarla en el origen hacía que la nave saliera
-        // fuera de ella y aparecieran sectores completamente negros.
-        if (this.mesh && cameraPosition) {
-            this.mesh.position.copy(cameraPosition);
-        }
+    update(time) {
+        // Points don't need update unless we want them to twinkle, which is expensive on CPU.
+        // For realistic space, stars don't twinkle when viewed from outside an atmosphere!
     }
 }

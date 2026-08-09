@@ -7,6 +7,36 @@ body {
   touch-action: none;
   overscroll-behavior: none;
 }
+
+#location-hud {
+  position: absolute;
+  left: 16px;
+  bottom: 18px;
+  z-index: 40;
+  pointer-events: none;
+  min-width: 220px;
+  padding: 10px 14px;
+  background: rgba(0, 12, 24, 0.72);
+  border: 1px solid rgba(0, 255, 200, 0.45);
+  border-radius: 6px;
+  font-family: 'Courier New', Courier, monospace;
+  color: #b8fff0;
+  font-size: 12px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+}
+#location-hud .loc-title {
+  color: #00ffc8;
+  font-weight: bold;
+  font-size: 11px;
+  margin-bottom: 4px;
+  letter-spacing: 0.12em;
+}
+#location-hud #loc-hint {
+  margin-top: 6px;
+  color: rgba(160, 220, 255, 0.65);
+  font-size: 10px;
+}
 #app {
   width: 100%;
   height: 100%;

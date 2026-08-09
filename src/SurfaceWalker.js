@@ -14,41 +14,32 @@ export class SurfaceWalker {
     this.planet = null;
     this.ship = null;
 
-    this.yaw = 0;          // órbita horizontal de la cámara (independiente del cuerpo)
-    this.pitch = 0.28;     // elevación cómoda: personaje siempre en cuadro
-    this.cameraDist = 240;
-    this.walkSpeed = 88;   // paso más pausado / humano
-    this.runSpeed = 165;
-    this.strideWalk = 88;
-    this.strideRun = 150;
+    this.yaw = 0;
+    this.pitch = 0.22;
+    this.cameraDist = 230;
+    // Escala del mundo: 100 unidades ≈ 1 m para el piloto de 150 unidades.
+    this.walkSpeed = 520;
+    this.runSpeed = 1100;
     this.currentSpeed = 0;
     this.verticalOffset = 0;
     this.verticalVelocity = 0;
     this.grounded = true;
     this.jumpHeld = false;
-    this.footOffset = 2;
+    this._jumpBuffer = 0;
+    this._coyote = 0;
+    this.footOffset = 4;
     this.charHeight = 150;
+    // Salto: impulso alto + gravedad fuerte = arco corto y natural
+    this.jumpVelocity = 420;
+    this.gravity = 980;
+    this.fallGravity = 1400; // más pesado al caer
+    this.jumpCutMul = 0.45; // soltar espacio corta el salto
+
     this._spawnLock = 0;
     this._camSnap = false;
     this._walkPhase = 0;
     this._savedFov = 75;
     this._faceYaw = 0; // hacia dónde mira / camina el personaje
-    this._targetFaceYaw = 0;
-    this._turnRate = 0; // rad/s suavizado, para inclinar el torso al girar
-    this._headLookYaw = 0;
-    this._headLookPitch = 0;
-    this._idleLookYaw = 0;
-    this._idleLookPitch = 0;
-    this._idleLookTimer = 0;
-    this._lean = 0;
-    this._sideLean = 0;
-    this._blockedKeys = Object.create(null); // teclas ya pulsadas al bajar → ignorar hasta soltar
-    this._smoothUp = new THREE.Vector3(0, 1, 0);
-    this._groundHeight = 0;
-    this._heightReady = false;
-    this._camBob = 0;
-    this._suitMats = [];
-    this._suitTime = 0;
 
     this._basisRight = new THREE.Vector3();
     this._basisFwd = new THREE.Vector3();
@@ -65,11 +56,13 @@ export class SurfaceWalker {
     this._basisY = new THREE.Vector3();
     this._basisZ = new THREE.Vector3();
     this._orientMat = new THREE.Matrix4();
-    this._worldPos = new THREE.Vector3();
-    this._planetWorld = new THREE.Vector3();
-    this._worldUp = new THREE.Vector3();
-    this._localCam = new THREE.Vector3();
-    this._moveAxis = new THREE.Vector3();
+    this._localDir = new THREE.Vector3(0, 1, 0);
+    this._worldDir = new THREE.Vector3();
+    this._invPlanetQ = new THREE.Quaternion();
+    this._syncDelta = new THREE.Vector3();
+    this._cameraQuat = new THREE.Quaternion();
+    this._cameraMat = new THREE.Matrix4();
+    this._basisAxis = new THREE.Vector3();
 
     this.root = new THREE.Group();
     this.visual = new THREE.Group();
@@ -97,11 +90,10 @@ export class SurfaceWalker {
       backdropFilter: 'blur(4px)'
     });
     this.controlsPanel.innerHTML =
-      '<b style="color:#00ffcc">A PIE — exploración</b><br>' +
+      '<b style="color:#00ffcc">A PIE — controles simples</b><br>' +
       '<span style="color:#fff">W</span> adelante · <span style="color:#fff">S</span> atrás · <span style="color:#fff">A/D</span> lados<br>' +
-      '<span style="color:#fff">Ratón</span> orbitar (360°) · <span style="color:#fff">Rueda</span> zoom<br>' +
-      '<span style="color:#fff">Shift</span> correr · <span style="color:#fff">Espacio</span> saltar<br>' +
-      '<span style="color:#fff">E</span> o <span style="color:#fff">L</span> subir a la nave (acércate)';
+      '<span style="color:#fff">Ratón</span> girar · <span style="color:#fff">Shift</span> correr · <span style="color:#fff">Espacio</span> saltar<br>' +
+      '<span style="color:#fff">E</span> o <span style="color:#fff">L</span> subir a la nave (acércate; ahora baja contigo)';
     document.body.appendChild(this.controlsPanel);
   }
 
@@ -163,7 +155,7 @@ export class SurfaceWalker {
     model.scale.multiplyScalar(fit);
     model.position.y = -box.min.y * fit;
 
-    const visorTint = new THREE.Color(0x146a9a);
+    const visorTint = new THREE.Color(0x0d4f74);
     const seenSkeletons = new Set();
     model.traverse((obj) => {
       if (obj.isBone) {
@@ -183,7 +175,19 @@ export class SurfaceWalker {
         this._rebaseSkeleton(obj);
       }
 
-      this._polishMaterial(obj);
+      const mat = obj.material;
+      if (!mat) return;
+      mat.envMapIntensity = 1.1;
+      if (/visor/i.test(mat.name || '')) {
+        mat.metalness = 1.0;
+        mat.roughness = 0.06;
+        mat.emissive = visorTint;
+        mat.emissiveIntensity = 0.5;
+      } else {
+        mat.metalness = Math.min(mat.metalness ?? 0.2, 0.3);
+        mat.roughness = 0.62;
+      }
+      mat.needsUpdate = true;
     });
 
     if (this.fallbackBody) {
@@ -195,101 +199,9 @@ export class SurfaceWalker {
       this.fallbackBody = null;
     }
 
-    // Luz barata (1 sola): PointLight dobles + Physical pegaban el FPS a pie.
-    if (!this.fillLight) {
-      this.fillLight = new THREE.HemisphereLight(0xd8ecff, 0x2a3a28, 0.85);
-      this.root.add(this.fillLight);
-    }
-    if (this.rimLight) {
-      this.root.remove(this.rimLight);
-      this.rimLight.dispose?.();
-      this.rimLight = null;
-    }
-
-    this._suitMats = [];
     this.model = model;
     this.modelPivot.add(model);
     this._setupAnimations(gltf.animations);
-  }
-
-  /** Texturas nítidas + traje legible sin hundir el FPS. */
-  _polishMaterial(obj) {
-    const src = obj.material;
-    if (!src) return;
-
-    const colorMaps = new Set([src.map, src.emissiveMap].filter(Boolean));
-    const maps = [src.map, src.normalMap, src.roughnessMap, src.metalnessMap, src.emissiveMap, src.aoMap];
-    for (const map of maps) {
-      if (!map) continue;
-      map.anisotropy = 4;
-      if (colorMaps.has(map)) map.colorSpace = THREE.SRGBColorSpace;
-      map.needsUpdate = true;
-    }
-
-    const isVisor = /visor/i.test(src.name || '') || /visor/i.test(obj.name || '');
-    if (isVisor) {
-      const visor = new THREE.MeshStandardMaterial({
-        map: src.map || null,
-        color: src.color ? src.color.clone() : new THREE.Color(0x0a2030),
-        metalness: 1.0,
-        roughness: 0.08,
-        emissive: new THREE.Color(0x1a88c8),
-        emissiveIntensity: 0.4,
-        transparent: true,
-        opacity: 0.9,
-        envMapIntensity: 1.2,
-        side: THREE.FrontSide
-      });
-      if (visor.map) visor.map.colorSpace = THREE.SRGBColorSpace;
-      this._enchantSuitShader(visor, true);
-      obj.material = visor;
-      src.dispose?.();
-      return;
-    }
-
-    const suit = new THREE.MeshStandardMaterial({
-      map: src.map || null,
-      normalMap: src.normalMap || null,
-      aoMap: src.aoMap || null,
-      color: src.color ? src.color.clone() : new THREE.Color(0xffffff),
-      metalness: 0.32,
-      roughness: 0.48,
-      envMapIntensity: 1.1,
-      side: THREE.FrontSide
-    });
-    if (suit.map) suit.map.colorSpace = THREE.SRGBColorSpace;
-    this._enchantSuitShader(suit, false);
-    obj.material = suit;
-    src.dispose?.();
-  }
-
-  /** Fresnel barato (sin clearcoat/sheen ni noise pesado). */
-  _enchantSuitShader(mat, isVisor) {
-    mat.userData.suit = {
-      uTime: { value: 0 },
-      uSpeed: { value: 0 },
-      uRim: { value: isVisor ? 1.1 : 0.55 }
-    };
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = mat.userData.suit.uTime;
-      shader.uniforms.uSpeed = mat.userData.suit.uSpeed;
-      shader.uniforms.uRim = mat.userData.suit.uRim;
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          '#include <common>',
-          '#include <common>\nuniform float uTime;\nuniform float uSpeed;\nuniform float uRim;'
-        )
-        .replace(
-          '#include <opaque_fragment>',
-          [
-            'float fres = pow(1.0 - max(dot(normalize(normal), normalize(vViewPosition)), 0.0), 3.0);',
-            'outgoingLight += vec3(0.2, 0.65, 1.0) * fres * uRim * (0.45 + uSpeed * 0.35);',
-            '#include <opaque_fragment>'
-          ].join('\n')
-        );
-    };
-    mat.customProgramCacheKey = () => 'suit-rim-v3' + (isVisor ? '-v' : '');
-    this._suitMats.push(mat);
   }
 
   /**
@@ -329,11 +241,10 @@ export class SurfaceWalker {
       action.setLoop(THREE.LoopRepeat, Infinity);
       action.enabled = true;
       action.setEffectiveWeight(name === 'Idle' ? 1 : 0);
-      // Fundidos largos: el cambio Idle↔Walk↔Run deja de sentirse a saltos.
-      action.setEffectiveTimeScale(1);
       action.play();
       this.actions[name] = action;
     }
+    // Walk y Run comparten fase para que los pasos no salten al mezclar.
     if (this.actions.Walk && this.actions.Run) {
       this.actions.Run.time = this.actions.Walk.time;
     }
@@ -404,13 +315,13 @@ export class SurfaceWalker {
 
   _buildTangentBasis(up) {
     const axis = Math.abs(up.x) > 0.9
-      ? new THREE.Vector3(0, 1, 0)
-      : new THREE.Vector3(1, 0, 0);
+      ? this._basisAxis.set(0, 1, 0)
+      : this._basisAxis.set(1, 0, 0);
     this._basisRight.crossVectors(axis, up).normalize();
     this._basisFwd.crossVectors(up, this._basisRight).normalize();
   }
 
-  exitShip(spaceship, keysHeld = null) {
+  exitShip(spaceship) {
     try {
       if (!spaceship?.hoverPlanet) return false;
       // Si aún no está en levitación, aterriza primero
@@ -428,78 +339,39 @@ export class SurfaceWalker {
       spaceship.speed = 0;
       spaceship.pitchAccumulator = 0;
       spaceship.yawAccumulator = 0;
+      spaceship._landedLocalDir = null;
 
       this.currentSpeed = 0;
       this.verticalOffset = 0;
       this.verticalVelocity = 0;
       this.grounded = true;
       this.jumpHeld = false;
-      this._spawnLock = 0.25;
+      this._spawnLock = 0.2;
       this._camSnap = true;
-      this._turnRate = 0;
-      this._moveDir.set(0, 0, 0);
-      this._armInputGate(keysHeld);
 
       const shipForward = new THREE.Vector3(0, 0, -1)
         .applyQuaternion(spaceship.mesh.quaternion);
       const up = new THREE.Vector3()
         .subVectors(spaceship.mesh.position, this.planet.group.position)
         .normalize();
+      this._buildTangentBasis(up);
 
-      // Hijo del planeta → órbita/spin heredados. Matriz al día antes de worldToLocal.
-      if (this.root.parent !== this.planet.group) {
-        if (this.root.parent) this.root.parent.remove(this.root);
-        this.planet.group.add(this.root);
-      }
-      this.planet.group.updateMatrixWorld(true);
+      const spawn = spaceship.mesh.position.clone()
+        .addScaledVector(shipForward, 180)
+        .addScaledVector(up, 8);
+      this._snapToSurface(spawn);
 
-      // Spawn al costado de la nave, proyectado al suelo (no debajo ni dentro del casco).
-      const side = new THREE.Vector3().crossVectors(shipForward, up).normalize();
-      const spawnWorld = spaceship.mesh.position.clone()
-        .addScaledVector(side, 900)
-        .addScaledVector(shipForward, 200)
-        .addScaledVector(up, 40);
-      const spawnLocal = spawnWorld.clone();
-      this.planet.group.worldToLocal(spawnLocal);
-      if (spawnLocal.lengthSq() < 1e-6) {
-        // Fallback: justo bajo la nave en espacio local
-        spawnLocal.copy(up).applyQuaternion(this.planet.group.quaternion.clone().invert())
-          .multiplyScalar(this.planet.radius + 100);
-      }
-
-      this.root.position.copy(spawnLocal);
-      this.root.quaternion.identity();
-      this._heightReady = false;
-      this._followSurface(spawnLocal, 1 / 60, true);
-
-      // Si el follow falló (NaN), recuperar
-      if (!Number.isFinite(this.root.position.x)) {
-        const dir = up.clone().applyQuaternion(this.planet.group.quaternion.clone().invert()).normalize();
-        this.root.position.copy(dir).multiplyScalar(this.planet.radius + this.footOffset + 50);
-        this._smoothUp.copy(dir);
-        this._up.copy(dir);
-        this._groundHeight = this.root.position.length();
-        this._heightReady = true;
-      }
-
-      // Bases tangentes en espacio LOCAL del planeta (origen = centro).
-      this._buildTangentBasis(this._up);
-      const facingLocal = shipForward.clone().applyQuaternion(
-        this.planet.group.quaternion.clone().invert()
-      ).projectOnPlane(this._up);
-      if (facingLocal.lengthSq() < 1e-6) facingLocal.copy(this._basisFwd);
-      else facingLocal.normalize();
-
+      const facing = shipForward.clone().projectOnPlane(up);
+      if (facing.lengthSq() < 1e-6) facing.copy(this._basisFwd);
+      else facing.normalize();
       this.yaw = Math.atan2(
-        facingLocal.dot(this._basisRight),
-        facingLocal.dot(this._basisFwd)
+        facing.dot(this._basisRight),
+        facing.dot(this._basisFwd)
       );
       this._faceYaw = this.yaw;
-      this._targetFaceYaw = this.yaw;
-      this._turnRate = 0;
-      this._moveDir.copy(facingLocal);
+      this._moveDir.copy(facing);
       this.pitch = 0.28;
-      this.cameraDist = 240;
+      this.cameraDist = 230;
       this.root.visible = true;
       this.controlsPanel.style.display = 'block';
       this._setExplorationHud(true);
@@ -508,13 +380,8 @@ export class SurfaceWalker {
       this.camera.fov = 60;
       this.camera.updateProjectionMatrix();
 
-      // Re-asegura el pointer lock: al pulsar E a veces se suelta y quedabas sin control.
-      if (typeof document !== 'undefined' && document.pointerLockElement !== document.body) {
-        document.body.requestPointerLock?.();
-      }
-
       const status = document.getElementById('autopilot-status');
-      if (status) status.innerText = 'A PIE · ratón orbitar · W mover · E nave';
+      if (status) status.innerText = 'A PIE · W adelante · ratón girar · E nave';
       return true;
     } catch (err) {
       console.error('[SurfaceWalker] exitShip failed', err);
@@ -533,19 +400,10 @@ export class SurfaceWalker {
       ship.pitchAccumulator = 0;
       ship.speed = 0;
     }
-    // Despegar del planeta: volver a la escena en coords de mundo
-    if (this.root.parent && this.root.parent !== this.scene) {
-      this.root.getWorldPosition(this._worldPos);
-      this.root.parent.remove(this.root);
-      this.scene.add(this.root);
-      this.root.position.copy(this._worldPos);
-      this.root.quaternion.identity();
-    }
     this.root.visible = false;
     this.controlsPanel.style.display = 'none';
     this._setExplorationHud(false);
     this.planet = null;
-    this._heightReady = false;
 
     this.camera.fov = this._savedFov || 75;
     this.camera.updateProjectionMatrix();
@@ -555,37 +413,14 @@ export class SurfaceWalker {
     this.ship = null;
   }
 
-  _armInputGate(keysHeld) {
-    this._blockedKeys = Object.create(null);
-    const watch = [
-      'KeyW', 'KeyA', 'KeyS', 'KeyD',
-      'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-      'ShiftLeft', 'ShiftRight', 'Space'
-    ];
-    // Solo bloquea lo que YA estaba pulsado (p.ej. W de la nave).
-    if (!keysHeld) return;
-    for (const code of watch) {
-      if (keysHeld[code]) this._blockedKeys[code] = true;
-    }
-  }
-
-  _keyDown(keys, code) {
-    if (this._spawnLock > 0) return false;
-    if (this._blockedKeys[code]) {
-      if (!keys?.[code]) delete this._blockedKeys[code];
-      return false;
-    }
-    return !!keys?.[code];
-  }
-
-  tryToggle(spaceship, keysHeld = null) {
+  tryToggle(spaceship) {
     if (this.active) {
       if (!this.ship) {
         this.active = false;
         if (spaceship) spaceship.onFoot = false;
         return;
       }
-      if (this.getWorldPosition(this._worldPos).distanceTo(this.ship.mesh.position) < 1400) {
+      if (this.root.position.distanceTo(this.ship.mesh.position) < 1100) {
         this.boardShip();
       } else {
         const status = document.getElementById('autopilot-status');
@@ -598,15 +433,17 @@ export class SurfaceWalker {
       spaceship.onFoot = false;
     }
     if (spaceship?.mode === 'HOVER' && spaceship.hoverPlanet) {
-      this.exitShip(spaceship, keysHeld);
+      this.exitShip(spaceship);
     }
   }
 
   onMouseMove(dx, dy) {
     if (!this.active) return;
-    // Órbita suave; límites pensados para no perder al personaje de cuadro.
-    this.yaw += dx * 0.0016;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * 0.0011, -0.05, 0.85);
+    // Mouse derecha = girar a la derecha (antes estaba al revés)
+    this.yaw += dx * 0.0018;
+    this._faceYaw = this.yaw;
+    // Mouse arriba = mirar un poco más alto
+    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * 0.0012, 0.08, 0.55);
   }
 
   onScroll(deltaY) {
@@ -614,11 +451,11 @@ export class SurfaceWalker {
     this.cameraDist = THREE.MathUtils.clamp(
       this.cameraDist + deltaY * 0.08,
       160,
-      420
+      380
     );
   }
 
-  /** Orienta el muñeco con up suavizado (evita tirones en pendientes). */
+  /** Orienta el muñeco: -Z local = adelante (visor), +Y = arriba del planeta. */
   _orientCharacter(forward, up) {
     if (forward.lengthSq() < 1e-8) return;
     this._basisZ.copy(forward).normalize().multiplyScalar(-1); // local +Z = espalda
@@ -629,61 +466,60 @@ export class SurfaceWalker {
     this._basisX.normalize();
     this._basisY.crossVectors(this._basisZ, this._basisX).normalize();
     this._orientMat.makeBasis(this._basisX, this._basisY, this._basisZ);
-    this._orientQuat = this._orientQuat || new THREE.Quaternion();
-    this._orientQuat.setFromRotationMatrix(this._orientMat);
-    this.root.quaternion.slerp(this._orientQuat, 0.14);
+    this.root.quaternion.setFromRotationMatrix(this._orientMat);
   }
 
-  /** Posición mundo del piloto (root vive en espacio local del planeta). */
-  getWorldPosition(out = this._worldPos) {
-    return this.root.getWorldPosition(out);
-  }
-
-  _terrainRadius(localDirection) {
+  _terrainRadius(worldDirection) {
+    const local = this._worldDir.copy(worldDirection)
+      .applyQuaternion(this._invPlanetQ.copy(this.planet.group.quaternion).invert());
     return TerrainBuilder.getHeight(
-      localDirection.clone().normalize(),
+      local,
       this.planet.radius,
       this.planet.biome,
       true
     );
   }
 
-  /**
-   * Espacio LOCAL del planeta (centro = origen). Al ser hijo de planet.group,
-   * órbita y spin se heredan solos: ya no “resbala” el suelo.
-   */
-  _followSurface(approxLocalPos, dt, hard = false) {
-    const localDir = approxLocalPos.clone().normalize();
-    const height = this._terrainRadius(localDir);
-    const targetRadius = height + this.footOffset + this.verticalOffset;
-
-    if (!this._heightReady || hard) {
-      this._groundHeight = targetRadius;
-      this._heightReady = true;
-      this._smoothUp.copy(localDir);
-    } else {
-      const gap = targetRadius - this._groundHeight;
-      const follow = gap > 0 ? 10 : 16;
-      this._groundHeight += gap * (1 - Math.exp(-follow * dt));
-      this._smoothUp.lerp(localDir, 1 - Math.exp(-8 * dt)).normalize();
-    }
-
-    this.root.position.copy(this._smoothUp).multiplyScalar(this._groundHeight);
-    this._up.copy(this._smoothUp);
+  _snapToSurface(approxWorldPos) {
+    const worldDir = this._worldDir.copy(approxWorldPos)
+      .sub(this.planet.group.position)
+      .normalize();
+    this._localDir.copy(worldDir)
+      .applyQuaternion(this._invPlanetQ.copy(this.planet.group.quaternion).invert())
+      .normalize();
+    const height = TerrainBuilder.getHeight(
+      this._localDir,
+      this.planet.radius,
+      this.planet.biome,
+      true
+    );
+    worldDir.copy(this._localDir).applyQuaternion(this.planet.group.quaternion).normalize();
+    this.root.position.copy(this.planet.group.position)
+      .addScaledVector(worldDir, height + this.footOffset + this.verticalOffset);
+    this._up.copy(worldDir);
   }
 
-  /** Avanza en arco sobre la esfera en espacio local. */
-  _moveOnSphere(dir, distance) {
-    if (distance < 1e-6 || dir.lengthSq() < 1e-8) return;
-    const rel = this.root.position.clone();
-    const radius = Math.max(rel.length(), 1);
-    const upN = this._tmp.copy(rel).normalize();
-    const tangent = dir.clone().projectOnPlane(upN);
-    if (tangent.lengthSq() < 1e-8) return;
-    tangent.normalize();
-    this._moveAxis.crossVectors(upN, tangent).normalize();
-    rel.applyAxisAngle(this._moveAxis, distance / radius);
-    this.root.position.copy(rel);
+  /**
+   * Reconstruye la posición desde coordenadas locales del planeta.
+   * Así suelo, personaje, cámara y nave comparten exactamente la misma rotación.
+   */
+  syncToPlanetTransform() {
+    if (!this.active || !this.planet) return;
+    this._syncDelta.copy(this.root.position);
+    const height = TerrainBuilder.getHeight(
+      this._localDir,
+      this.planet.radius,
+      this.planet.biome,
+      true
+    );
+    this._worldDir.copy(this._localDir)
+      .applyQuaternion(this.planet.group.quaternion)
+      .normalize();
+    this.root.position.copy(this.planet.group.position)
+      .addScaledVector(this._worldDir, height + this.footOffset + this.verticalOffset);
+    this._up.copy(this._worldDir);
+    this._syncDelta.subVectors(this.root.position, this._syncDelta);
+    this.camera.position.add(this._syncDelta);
   }
 
   /**
@@ -706,9 +542,7 @@ export class SurfaceWalker {
     let wIdle = 0;
     let wWalk = 0;
     let wRun = 0;
-    if (speed <= this.walkSpeed * 0.15) {
-      wIdle = 1;
-    } else if (speed <= this.walkSpeed) {
+    if (speed <= this.walkSpeed) {
       wWalk = THREE.MathUtils.clamp(speed / this.walkSpeed, 0, 1);
       wIdle = 1 - wWalk;
     } else {
@@ -722,45 +556,25 @@ export class SurfaceWalker {
 
     const airborne = !this.grounded;
     if (airborne) {
-      wIdle = Math.max(wIdle, 0.45);
-      wWalk *= 0.35;
-      wRun *= 0.35;
+      // En el aire no hay contacto con el suelo: casi congelamos la locomoción.
+      wIdle = Math.max(wIdle, 0.35);
     }
 
-    // Blend muy suave → Idle↔Walk↔Run sin saltos de pose.
-    const blend = Math.min(1, dt * 2.4);
+    const blend = Math.min(1, dt * 9);
     this._applyWeight(this.actions.Idle, wIdle, blend);
     this._applyWeight(this.actions.Walk, wWalk, blend);
     this._applyWeight(this.actions.Run, wRun, blend);
 
+    // Ajustar la cadencia al desplazamiento real evita el patinaje de pies.
     if (this.actions.Walk) {
-      // Cadencia ≈ distancia / zancada, con suavizado para no “tic-tac”.
-      const walkScale = airborne
-        ? 0.15
-        : THREE.MathUtils.clamp(0.75 + (speed / Math.max(this.strideWalk, 1)) * 0.35, 0.7, 1.15);
-      this.actions.Walk.timeScale = THREE.MathUtils.lerp(
-        this.actions.Walk.timeScale || 1,
-        walkScale,
-        Math.min(1, dt * 5)
-      );
+      this.actions.Walk.timeScale = airborne
+        ? 0.25
+        : THREE.MathUtils.clamp(speed / this.walkSpeed, 0.55, 1.45);
     }
     if (this.actions.Run) {
-      const runScale = airborne
-        ? 0.15
-        : THREE.MathUtils.clamp(0.8 + (speed / Math.max(this.strideRun, 1)) * 0.3, 0.75, 1.2);
-      this.actions.Run.timeScale = THREE.MathUtils.lerp(
-        this.actions.Run.timeScale || 1,
-        runScale,
-        Math.min(1, dt * 5)
-      );
-    }
-    // Mantener fase entre Walk y Run.
-    if (this.actions.Walk && this.actions.Run && this.actions.Run.getEffectiveWeight() > 0.05) {
-      const walkDur = this.actions.Walk.getClip().duration;
-      const runDur = this.actions.Run.getClip().duration;
-      if (walkDur > 0 && runDur > 0) {
-        this.actions.Run.time = (this.actions.Walk.time / walkDur) * runDur;
-      }
+      this.actions.Run.timeScale = airborne
+        ? 0.25
+        : THREE.MathUtils.clamp(speed / this.runSpeed, 0.6, 1.35);
     }
 
     this.mixer.update(dt);
@@ -779,66 +593,34 @@ export class SurfaceWalker {
   /** Retoques encima del clip, aplicados después de mixer.update(). */
   _applyBoneTouches(dt, moving, running, airborne) {
     const speedRatio = THREE.MathUtils.clamp(this.currentSpeed / this.runSpeed, 0, 1);
-    const leanTarget = airborne ? 0.08 : speedRatio * (running ? 0.14 : 0.09);
-    this._lean = THREE.MathUtils.lerp(this._lean ?? 0, leanTarget, Math.min(1, dt * 3.2));
-
-    // Inclinación lateral al girar (peso del cuerpo, no caricatura).
-    const sideTarget = THREE.MathUtils.clamp(-(this._turnRate || 0) * 0.06, -0.12, 0.12);
-    this._sideLean = THREE.MathUtils.lerp(this._sideLean ?? 0, sideTarget, Math.min(1, dt * 4));
+    const leanTarget = airborne ? 0.12 : speedRatio * 0.2;
+    this._lean = THREE.MathUtils.lerp(this._lean ?? 0, leanTarget, Math.min(1, dt * 6));
 
     const spine = this.bones.Spine;
-    if (spine) {
-      this._rotateBone(spine, this._lean * 0.4);
-      this._rotateBoneZ(spine, this._sideLean * 0.65);
-    }
+    if (spine) this._rotateBone(spine, this._lean * 0.5);
     const spine1 = this.bones.Spine1;
-    if (spine1) {
-      this._rotateBone(spine1, this._lean * 0.25);
-      this._rotateBoneZ(spine1, this._sideLean * 0.4);
-    }
-    const hips = this.bones.Hips;
-    if (hips && moving && this.grounded) {
-      // Ligero balanceo de cadera al caminar.
-      this._rotateBoneZ(hips, Math.sin(this._walkPhase) * 0.035 * (1 - speedRatio * 0.3));
-    }
+    if (spine1) this._rotateBone(spine1, this._lean * 0.3);
 
+    // La cabeza compensa la inclinación y sigue el ángulo de cámara.
     const head = this.bones.Head;
     if (head) {
-      const camPitch = THREE.MathUtils.clamp(0.1 - this.pitch * 0.12, -0.15, 0.2);
-      this._rotateBone(
-        head,
-        -this._lean * 0.45 + camPitch + (this._headLookPitch || 0) + (this._idleLookPitch || 0)
-      );
-      this._rotateBoneY(head, (this._headLookYaw || 0) + (this._idleLookYaw || 0));
-    }
-    const neck = this.bones.Neck;
-    if (neck) {
-      this._rotateBoneY(neck, ((this._headLookYaw || 0) + (this._idleLookYaw || 0)) * 0.35);
-      this._rotateBoneZ(neck, this._sideLean * 0.2);
+      const look = THREE.MathUtils.clamp(0.26 - this.pitch, -0.3, 0.3);
+      this._rotateBone(head, -this._lean * 0.8 + look * 0.5);
     }
 
     if (airborne) {
       const tuck = THREE.MathUtils.clamp(this.verticalVelocity / 150, -1, 1);
-      this._rotateBone(this.bones.LeftUpLeg, -0.22 - tuck * 0.15);
-      this._rotateBone(this.bones.RightUpLeg, -0.1 + tuck * 0.12);
-      this._rotateBone(this.bones.LeftLeg, 0.35);
-      this._rotateBone(this.bones.RightLeg, 0.22);
-      this._rotateBone(this.bones.LeftArm, -0.2);
-      this._rotateBone(this.bones.RightArm, -0.2);
+      this._rotateBone(this.bones.LeftUpLeg, -0.35 - tuck * 0.25);
+      this._rotateBone(this.bones.RightUpLeg, -0.15 + tuck * 0.2);
+      this._rotateBone(this.bones.LeftLeg, 0.55);
+      this._rotateBone(this.bones.RightLeg, 0.3);
+      this._rotateBone(this.bones.LeftArm, -0.3);
+      this._rotateBone(this.bones.RightArm, -0.3);
     }
 
-    // Idle vivo: respiración + balanceo + brazos suaves.
-    if (!moving || speedRatio < 0.08) {
-      const breath = Math.sin(this._walkPhase * 1.35);
-      if (this.bones.Spine2) this._rotateBone(this.bones.Spine2, breath * 0.022);
-      if (this.bones.Hips) this._rotateBoneZ(this.bones.Hips, Math.sin(this._walkPhase * 0.55) * 0.02);
-      if (this.bones.LeftArm) this._rotateBone(this.bones.LeftArm, Math.sin(this._walkPhase * 0.75) * 0.03);
-      if (this.bones.RightArm) this._rotateBone(this.bones.RightArm, Math.sin(this._walkPhase * 0.75 + 1.1) * 0.03);
-    } else if (this.grounded) {
-      // Balanceo de brazos opuesto a las piernas (refuerzo natural sobre el clip).
-      const armSwing = Math.sin(this._walkPhase) * (running ? 0.08 : 0.05);
-      if (this.bones.LeftArm) this._rotateBone(this.bones.LeftArm, armSwing);
-      if (this.bones.RightArm) this._rotateBone(this.bones.RightArm, -armSwing);
+    // Respiración sutil cuando está quieto.
+    if (!moving && this.bones.Spine2) {
+      this._rotateBone(this.bones.Spine2, Math.sin(this._walkPhase * 1.6) * 0.02);
     }
   }
 
@@ -848,35 +630,6 @@ export class SurfaceWalker {
     this._boneAxis = this._boneAxis || new THREE.Vector3(1, 0, 0);
     this._boneQuat.setFromAxisAngle(this._boneAxis, angleX);
     bone.quaternion.multiply(this._boneQuat);
-  }
-
-  _rotateBoneY(bone, angleY) {
-    if (!bone || !angleY) return;
-    this._boneQuat = this._boneQuat || new THREE.Quaternion();
-    this._boneAxisY = this._boneAxisY || new THREE.Vector3(0, 1, 0);
-    this._boneQuat.setFromAxisAngle(this._boneAxisY, angleY);
-    bone.quaternion.multiply(this._boneQuat);
-  }
-
-  _rotateBoneZ(bone, angleZ) {
-    if (!bone || !angleZ) return;
-    this._boneQuat = this._boneQuat || new THREE.Quaternion();
-    this._boneAxisZ = this._boneAxisZ || new THREE.Vector3(0, 0, 1);
-    this._boneQuat.setFromAxisAngle(this._boneAxisZ, angleZ);
-    bone.quaternion.multiply(this._boneQuat);
-  }
-
-  /** Normaliza un ángulo al rango (-π, π]. */
-  _wrapAngle(a) {
-    const tau = Math.PI * 2;
-    a = ((a + Math.PI) % tau + tau) % tau - Math.PI;
-    return a;
-  }
-
-  /** Interpola yaw por el camino más corto. */
-  _dampAngle(current, target, lambda, dt) {
-    const delta = this._wrapAngle(target - current);
-    return current + delta * (1 - Math.exp(-lambda * dt));
   }
 
   _updateContactShadow(dt, moving) {
@@ -902,24 +655,11 @@ export class SurfaceWalker {
 
   _updateInner(delta, keys) {
     const dt = Math.min(delta, 0.05);
-    if (this._spawnLock > 0) {
-      this._spawnLock -= dt;
-      if (this._spawnLock <= 0) {
-        // Al terminar el lock, limpia teclas fantasma por si quedaron atrapadas.
-        for (const code of Object.keys(this._blockedKeys)) {
-          if (!keys?.[code]) delete this._blockedKeys[code];
-        }
-      }
-    }
+    if (this._spawnLock > 0) this._spawnLock -= dt;
 
-    // Root es hijo de planet.group → up local = dirección radial
-    if (this.root.position.lengthSq() < 1e-4) {
-      // Evita quedarse “pegado” en el centro del planeta
-      this.root.position.set(0, this.planet.radius + 50, 0);
-      this._heightReady = false;
-    }
-    const up = this.root.position.clone().normalize();
-    this._up.copy(up);
+    // Anclaje exacto en espacio local; no acumula deriva con la rotación.
+    this.syncToPlanetTransform();
+    const up = this._up;
     this._buildTangentBasis(up);
 
     const cos = Math.cos(this.yaw);
@@ -932,15 +672,20 @@ export class SurfaceWalker {
     let x = 0;
     let z = 0;
     if (this._spawnLock <= 0) {
-      if (this._keyDown(keys, 'KeyW') || this._keyDown(keys, 'ArrowUp')) z += 1;
-      if (this._keyDown(keys, 'KeyS') || this._keyDown(keys, 'ArrowDown')) z -= 1;
-      if (this._keyDown(keys, 'KeyA') || this._keyDown(keys, 'ArrowLeft')) x -= 1;
-      if (this._keyDown(keys, 'KeyD') || this._keyDown(keys, 'ArrowRight')) x += 1;
+      if (keys.KeyW || keys.ArrowUp) z += 1;
+      if (keys.KeyS || keys.ArrowDown) z -= 1;
+      if (keys.KeyA || keys.ArrowLeft) x -= 1;
+      if (keys.KeyD || keys.ArrowRight) x += 1;
     }
 
     const moving = x !== 0 || z !== 0;
-    const running = moving && (
-      this._keyDown(keys, 'ShiftLeft') || this._keyDown(keys, 'ShiftRight')
+    const running = moving && !!(keys.ShiftLeft || keys.ShiftRight);
+    const targetSpeed = moving ? (running ? this.runSpeed : this.walkSpeed) : 0;
+    this.currentSpeed = THREE.MathUtils.damp(
+      this.currentSpeed,
+      targetSpeed,
+      targetSpeed > this.currentSpeed ? 14 : 16,
+      dt
     );
 
     if (moving) {
@@ -948,58 +693,50 @@ export class SurfaceWalker {
         .addScaledVector(this._right, x);
       if (this._desiredDir.lengthSq() > 1e-6) {
         this._desiredDir.normalize();
-        this._targetFaceYaw = Math.atan2(
-          this._desiredDir.dot(this._basisRight),
-          this._desiredDir.dot(this._basisFwd)
+        this._moveDir.copy(this._desiredDir);
+        const targetFaceYaw = Math.atan2(
+          this._moveDir.dot(this._basisRight),
+          this._moveDir.dot(this._basisFwd)
         );
+        const turnDelta = Math.atan2(
+          Math.sin(targetFaceYaw - this._faceYaw),
+          Math.cos(targetFaceYaw - this._faceYaw)
+        );
+        this._faceYaw += turnDelta * (1 - Math.exp(-14 * dt));
       }
     }
 
-    // Giro suave: nunca salta al ángulo deseado de golpe.
-    const prevFace = this._faceYaw;
-    const turnLambda = running ? 4.8 : (moving ? 3.4 : 2.4);
-    this._faceYaw = this._dampAngle(this._faceYaw, this._targetFaceYaw, turnLambda, dt);
-    const turnDelta = this._wrapAngle(this._faceYaw - prevFace);
-    this._turnRate = THREE.MathUtils.lerp(this._turnRate || 0, turnDelta / Math.max(dt, 1e-4), Math.min(1, dt * 6));
-
-    // Adelante real del cuerpo (después del giro amortiguado).
-    const faceCos = Math.cos(this._faceYaw);
-    const faceSin = Math.sin(this._faceYaw);
-    this._faceFwd.copy(this._basisFwd).multiplyScalar(faceCos)
-      .addScaledVector(this._basisRight, faceSin);
-    if (this._faceFwd.lengthSq() < 1e-6) this._faceFwd.copy(this._fwd);
-    else this._faceFwd.normalize();
-
-    // Si el giro es cerrado, frena: parece que pivota en vez de patinar.
-    const turnError = Math.abs(this._wrapAngle(this._targetFaceYaw - this._faceYaw));
-    const turnSlow = moving
-      ? THREE.MathUtils.clamp(1 - turnError / Math.PI, 0.32, 1)
-      : 1;
-    const targetSpeed = moving
-      ? (running ? this.runSpeed : this.walkSpeed) * turnSlow
-      : 0;
-    // Arranque lento, frenado más rápido (peso humano).
-    const accel = targetSpeed > this.currentSpeed ? 2.4 : 4.8;
-    this.currentSpeed = THREE.MathUtils.lerp(
-      this.currentSpeed,
-      targetSpeed,
-      Math.min(1, dt * accel)
-    );
-
-    if (this.currentSpeed > 0.5) {
-      // Arco sobre la esfera + dirección de mirada → ya no “pata de pato” en el globo.
-      this._moveDir.copy(this._faceFwd);
-      this._moveOnSphere(this._moveDir, this.currentSpeed * dt);
+    if (this.currentSpeed > 0.5 && this._moveDir.lengthSq() > 0.01) {
+      this.root.position.addScaledVector(this._moveDir, this.currentSpeed * dt);
     }
 
-    const jumpPressed = this._keyDown(keys, 'Space');
-    if (jumpPressed && !this.jumpHeld && this.grounded && this._spawnLock <= 0) {
-      this.verticalVelocity = 145;
+    // Coyote time + buffer: el salto responde mejor
+    if (this.grounded) this._coyote = 0.12;
+    else this._coyote = Math.max(0, this._coyote - dt);
+
+    const jumpPressed = !!keys.Space;
+    if (jumpPressed && !this.jumpHeld) this._jumpBuffer = 0.12;
+    this._jumpBuffer = Math.max(0, this._jumpBuffer - dt);
+
+    if (this._jumpBuffer > 0 && this._coyote > 0 && this._spawnLock <= 0) {
+      this.verticalVelocity = this.jumpVelocity;
+      // Empujón adelante si ya te movías
+      if (this.currentSpeed > 40) {
+        this.root.position.addScaledVector(this._moveDir, Math.min(this.currentSpeed, 200) * 0.08);
+      }
       this.grounded = false;
+      this._coyote = 0;
+      this._jumpBuffer = 0;
+    }
+    // Cortar salto al soltar espacio (arco más controlable)
+    if (!jumpPressed && this.jumpHeld && !this.grounded && this.verticalVelocity > 0) {
+      this.verticalVelocity *= this.jumpCutMul;
     }
     this.jumpHeld = jumpPressed;
+
     if (!this.grounded) {
-      this.verticalVelocity -= 280 * dt;
+      const g = this.verticalVelocity > 0 ? this.gravity : this.fallGravity;
+      this.verticalVelocity -= g * dt;
       this.verticalOffset += this.verticalVelocity * dt;
       if (this.verticalOffset <= 0) {
         this.verticalOffset = 0;
@@ -1008,48 +745,44 @@ export class SurfaceWalker {
       }
     }
 
-    this._followSurface(this.root.position, dt, false);
+    this._snapToSurface(this.root.position);
 
-    this._orientCharacter(this._faceFwd, this._up);
+    // Adelante del cuerpo = dirección de marcha (o mira si estás quieto)
+    const faceCos = Math.cos(this._faceYaw);
+    const faceSin = Math.sin(this._faceYaw);
+    this._faceFwd.copy(this._basisFwd).multiplyScalar(faceCos)
+      .addScaledVector(this._basisRight, faceSin);
+    if (this._faceFwd.lengthSq() < 1e-6) this._faceFwd.copy(this._fwd);
+    else this._faceFwd.normalize();
 
-    // Cámara en MUNDO: offset local → world (el root gira con el planeta).
-    const headH = this.charHeight;
-    const elev = this.pitch;
-    const horiz = this.cameraDist * Math.cos(elev);
-    const lift = this.cameraDist * Math.sin(elev);
-    const bobTarget = (moving && this.grounded)
-      ? Math.sin(this._walkPhase * 2) * (running ? 4.5 : 2.6)
-      : 0;
-    this._camBob = THREE.MathUtils.lerp(this._camBob || 0, bobTarget, Math.min(1, dt * 8));
+    this._orientCharacter(this._faceFwd, up);
+    this._animatePilot(dt, moving, running);
 
-    this._localCam.copy(this.root.position)
-      .addScaledVector(this._fwd, -horiz)
-      .addScaledVector(this._up, headH * 0.62 + lift + this._camBob);
-    this._camPos.copy(this._localCam);
-    this.planet.group.localToWorld(this._camPos);
-
-    this.planet.group.getWorldPosition(this._planetWorld);
-    this._worldUp.copy(this._camPos).sub(this._planetWorld).normalize();
-    const minRadius = this._terrainRadius(
-      this._worldUp.clone().applyQuaternion(this.planet.group.quaternion.clone().invert())
-    ) + 50;
-    const camDistFromCenter = this._camPos.distanceTo(this._planetWorld);
-    if (camDistFromCenter < minRadius) {
-      this._camPos.copy(this._planetWorld).addScaledVector(this._worldUp, minRadius);
+    const targetFov = running ? 64 : (moving ? 61 : 60);
+    const nextFov = THREE.MathUtils.damp(this.camera.fov, targetFov, 6, dt);
+    if (Math.abs(nextFov - this.camera.fov) > 0.01) {
+      this.camera.fov = nextFov;
+      this.camera.updateProjectionMatrix();
     }
 
-    // Mira al pecho/cabeza para mantener al piloto centrado en pantalla.
-    this._lookTarget.copy(this.root.position)
-      .addScaledVector(this._up, headH * 0.55);
-    this.planet.group.localToWorld(this._lookTarget);
+    // Cámara detrás de la dirección de mirada, independiente del strafe.
+    const headH = this.charHeight;
+    this._camPos.copy(this.root.position)
+      .addScaledVector(this._fwd, -this.cameraDist)
+      .addScaledVector(up, headH * 0.55 + this.pitch * this.cameraDist * 0.85);
 
-    this.getWorldPosition(this._worldPos);
-    this._updateHeadLook(moving, dt);
-    this._animatePilot(dt, moving, running);
-    this._updateSuitMagic(dt);
+    const camAway = this._tmp.copy(this._camPos).sub(this.planet.group.position);
+    if (camAway.lengthSq() > 1e-6) {
+      camAway.normalize();
+      const minRadius = this._terrainRadius(camAway) + 35;
+      if (this._camPos.distanceTo(this.planet.group.position) < minRadius) {
+        this._camPos.copy(this.planet.group.position).addScaledVector(camAway, minRadius);
+      }
+    }
 
-    const targetQuaternion = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().lookAt(this._camPos, this._lookTarget, this._worldUp)
+    this._lookTarget.copy(this.root.position).addScaledVector(up, headH * 0.7);
+    const targetQuaternion = this._cameraQuat.setFromRotationMatrix(
+      this._cameraMat.lookAt(this._camPos, this._lookTarget, up)
     );
 
     if (this._camSnap) {
@@ -1058,72 +791,12 @@ export class SurfaceWalker {
       this.camera.quaternion.copy(targetQuaternion);
       return;
     }
-    // Cámara más “pegajosa” al cuerpo → menos se te escapa del cuadro.
-    this.camera.position.lerp(this._camPos, Math.min(1, dt * 12));
-    this.camera.quaternion.slerp(targetQuaternion, Math.min(1, dt * 11));
+    this.camera.position.lerp(this._camPos, Math.min(1, dt * 14));
+    this.camera.quaternion.slerp(targetQuaternion, Math.min(1, dt * 14));
   }
 
-  _updateSuitMagic(dt) {
-    this._suitTime = (this._suitTime || 0) + dt;
-    const speedN = THREE.MathUtils.clamp(this.currentSpeed / this.runSpeed, 0, 1);
-    for (const mat of this._suitMats) {
-      if (!mat.userData.suit) continue;
-      mat.userData.suit.uTime.value = this._suitTime;
-      mat.userData.suit.uSpeed.value = speedN;
-    }
-  }
-
-  /** Cabeza: mira la cámara de cerca; si no, deambula con naturalidad. */
-  _updateHeadLook(moving, dt) {
-    if (!this.bones.Head && !this.bones.Neck) return;
-    let targetYaw = 0;
-    let targetPitch = 0;
-
-    // Mirada errante en idle (cada ~2.5–4 s elige un punto nuevo).
-    this._idleLookTimer = (this._idleLookTimer || 0) - dt;
-    if (this._idleLookTimer <= 0) {
-      this._idleLookTimer = 2.4 + Math.random() * 2.2;
-      this._idleLookTargetYaw = (Math.random() - 0.5) * 0.7;
-      this._idleLookTargetPitch = (Math.random() - 0.5) * 0.25;
-    }
-    const idleAmt = moving ? 0 : 1;
-    this._idleLookYaw = THREE.MathUtils.lerp(
-      this._idleLookYaw || 0,
-      (this._idleLookTargetYaw || 0) * idleAmt,
-      Math.min(1, dt * 1.6)
-    );
-    this._idleLookPitch = THREE.MathUtils.lerp(
-      this._idleLookPitch || 0,
-      (this._idleLookTargetPitch || 0) * idleAmt,
-      Math.min(1, dt * 1.6)
-    );
-
-    if (!moving && this.grounded) {
-      // Cámara está en mundo; pasar a local del planeta para comparar con el cuerpo.
-      this._tmp.copy(this._camPos);
-      this.planet.group.worldToLocal(this._tmp);
-      this._tmp.sub(this.root.position);
-      this._basisX.crossVectors(this._up, this._faceFwd);
-      if (this._basisX.lengthSq() > 1e-8 && this._tmp.lengthSq() > 1e-6) {
-        this._basisX.normalize();
-        const side = this._tmp.dot(this._basisX);
-        const fwd = this._tmp.dot(this._faceFwd);
-        // Solo mira a cámara si está más o menos delante / a un costado cercano.
-        const ang = Math.atan2(side, -fwd);
-        if (Math.abs(ang) < 1.35) {
-          targetYaw = THREE.MathUtils.clamp(ang * 0.55, -0.55, 0.55);
-          const upDot = this._tmp.dot(this._up) / this._tmp.length();
-          targetPitch = THREE.MathUtils.clamp(upDot * 0.3, -0.22, 0.3);
-        }
-      }
-    }
-    this._headLookYaw = THREE.MathUtils.lerp(this._headLookYaw || 0, targetYaw, Math.min(1, dt * 3.2));
-    this._headLookPitch = THREE.MathUtils.lerp(this._headLookPitch || 0, targetPitch, Math.min(1, dt * 3.2));
-  }
-
-  nearShip(maxDist = 1400) {
-    if (!this.ship) return false;
-    return this.getWorldPosition(this._worldPos)
-      .distanceTo(this.ship.mesh.position) < maxDist;
+  nearShip(maxDist = 500) {
+    return !!this.ship &&
+      this.root.position.distanceTo(this.ship.mesh.position) < maxDist;
   }
 }

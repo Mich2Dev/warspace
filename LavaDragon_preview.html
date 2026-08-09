@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>LavaDragon — animated</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0a0e; }
+    canvas { display: block; }
+    #hud {
+      position: fixed; left: 14px; top: 14px; z-index: 2;
+      padding: 12px 14px; color: #f0dcc4; font: 13px/1.5 Consolas, monospace;
+      background: #120c10ee; border: 1px solid #ff8a3e66; border-radius: 8px;
+    }
+    #hud b { color: #ff9040; }
+    select, button {
+      margin-top: 8px; margin-right: 6px; padding: 6px 10px;
+      background: #241108; color: #ffe3c2; border: 1px solid #ff8a3e99;
+      border-radius: 6px; font: 12px Consolas, monospace; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <b>LAVADRAGON</b><br />
+    Clip: <select id="clip"></select>
+    <button id="replay">Replay</button>
+    <div id="info">Cargando…</div>
+  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.25;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0a0e);
+    scene.fog = new THREE.Fog(0x0b0a0e, 8, 28);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.05, 120);
+    camera.position.set(3.2, 1.8, 4.0);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 0.4, 0);
+
+    scene.add(new THREE.HemisphereLight(0xfff0e0, 0x1a1018, 1.2));
+    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    key.position.set(4, 7, 3);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x88aaff, 0.7);
+    fill.position.set(-5, 2, -3);
+    scene.add(fill);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(12, 64),
+      new THREE.MeshStandardMaterial({ color: 0x1a1210, roughness: 0.95, metalness: 0.05 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+    scene.add(new THREE.GridHelper(14, 28, 0x553322, 0x2a1810));
+
+    const clock = new THREE.Clock();
+    let mixer = null;
+    let actions = {};
+    let current = null;
+
+    const clipSel = document.getElementById('clip');
+    const info = document.getElementById('info');
+
+    function play(name) {
+      if (!actions[name]) return;
+      if (current) current.fadeOut(0.25);
+      current = actions[name];
+      current.reset().fadeIn(0.25).play();
+      clipSel.value = name;
+    }
+
+    new GLTFLoader().load('/models/fauna/LavaDragon_animated.glb', (gltf) => {
+      const root = gltf.scene;
+      scene.add(root);
+
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const c = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 1);
+      controls.target.copy(c);
+      camera.position.set(c.x + maxDim * 1.2, c.y + maxDim * 0.55, c.z + maxDim * 1.5);
+      controls.update();
+
+      mixer = new THREE.AnimationMixer(root);
+      for (const clip of gltf.animations) {
+        actions[clip.name] = mixer.clipAction(clip);
+        const opt = document.createElement('option');
+        opt.value = clip.name;
+        opt.textContent = clip.name;
+        clipSel.appendChild(opt);
+      }
+
+      const names = Object.keys(actions);
+      info.textContent = names.length
+        ? `${names.length} clips · size ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}`
+        : 'Sin animaciones (solo mesh)';
+      if (names.length) play(names[0]);
+    }, undefined, (err) => {
+      info.textContent = 'Error cargando LavaDragon_animated.glb';
+      console.error(err);
+    });
+
+    clipSel.onchange = () => play(clipSel.value);
+    document.getElementById('replay').onclick = () => {
+      if (current) current.reset().play();
+    };
+
+    (function tick() {
+      requestAnimationFrame(tick);
+      const dt = clock.getDelta();
+      if (mixer) mixer.update(dt);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>

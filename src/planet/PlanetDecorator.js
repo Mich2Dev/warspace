@@ -178,7 +178,9 @@ export class PlanetDecorator {
     this.initVariations();
     
     // Agrupamos masivamente en bosques densos
-    const numDecorations = 6000; 
+    // InstancedMesh aún procesa todas las instancias de la esfera, incluso
+    // las del hemisferio opuesto. 1800 mantiene bosques visibles sin saturar.
+    const numDecorations = 1800;
     const NUM_VARIANTS = 3;
     
     const isDual = true;
@@ -249,9 +251,8 @@ export class PlanetDecorator {
         dummy.quaternion.setFromUnitVectors(upVector, dir);
         
         // Slightly smaller / denser silhouette near the tree line
-        // Árboles ~3–5× el alto del piloto (150 u)
         const alpineShrink = elev > 3200 ? THREE.MathUtils.clamp(1.0 - (elev - 3200) / 2300, 0.55, 1.0) : 1.0;
-        const baseScale = radius * 0.00105 * alpineShrink;
+        const baseScale = radius * 0.00048 * alpineShrink;
         const scale = baseScale + noise3D(dir.x * 5, dir.y * 5, 3) * (baseScale * 0.9);
         const scaleX = scale * (0.85 + noise3D(dir.x * 20, dir.y * 20, 1) * 0.3);
         const scaleY = scale * (0.95 + noise3D(dir.x * 20, dir.y * 20, 2) * 0.9);
@@ -306,7 +307,7 @@ export class PlanetDecorator {
     }
 
     // --- 2. Sotobosque: arbustos (Terran only) ---
-    const numClutter = 2000;
+    const numClutter = 600;
     const clutterGeoms = this.geometries.bush;
     const clutterMat = this.materials.bushMat;
     const baseClutterColor = new THREE.Color(0x2f5a2c);
@@ -345,8 +346,7 @@ export class PlanetDecorator {
         dummy.position.copy(pos);
         dummy.quaternion.setFromUnitVectors(upVector, dir);
         
-        // Arbustos a cintura/pecho del piloto
-        const baseScale = radius * 0.00022; 
+        const baseScale = radius * 0.00015; 
         const scale = baseScale + noise3D(dir.x * 12, dir.y * 12, 3) * (baseScale * 0.8); 
         dummy.scale.set(scale, scale * (1.0 + Math.random()), scale);
         

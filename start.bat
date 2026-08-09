@@ -1,45 +1,37 @@
 @echo off
 color 0b
-cd /d "%~dp0"
 echo ===================================================
-echo     INICIANDO NO MAN'S SKY CLONE (MULTIJUGADOR)
+echo     INICIANDO WARSPACE
 echo ===================================================
 echo.
+echo  [1] App de escritorio (recomendado ? sin navegador)
+echo  [2] Modo navegador clasico (Vite + servidor)
+echo  [3] Solo tunel Ngrok (si ya tienes el juego corriendo)
+echo.
+choice /C 123 /N /M "Elige opcion: "
+if errorlevel 3 goto NGROK
+if errorlevel 2 goto BROWSER
+if errorlevel 1 goto DESKTOP
 
-echo [1/3] Levantando Servidor Central (Socket.io en puerto 3000)...
-start "NoMansSky - Servidor Backend" cmd /k "node server.js"
+:DESKTOP
+call "%~dp0Jugar.bat"
+goto END
 
-echo [2/3] Levantando Motor Grafico (Vite)...
-start "NoMansSky - Motor Grafico" cmd /k "npm run dev"
+:BROWSER
+echo.
+echo [1/2] Levantando Servidor Central (Socket.io en puerto 3000)...
+start "Warspace - Servidor Backend" cmd /k "node server.js"
+
+echo [2/2] Levantando Motor Grafico (Vite en puerto 5173)...
+start "Warspace - Motor Grafico" cmd /k "npm run dev"
 
 echo.
-echo Esperando a que el juego este listo...
-set /a _tries=0
-:wait_vite
-set /a _tries+=1
-if %_tries% GTR 40 goto open_anyway
-timeout /t 1 /nobreak >nul
-powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 http://localhost:5173/; if ($r.StatusCode -ge 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-if errorlevel 1 goto wait_vite
-
-:open_anyway
-echo [3/3] Abriendo el juego en tu navegador...
-start "" "http://localhost:5173/"
-
+echo Abre http://localhost:5173/ en el navegador si no se abre solo.
 echo.
-echo ===================================================
-echo Juego abierto en http://localhost:5173/
-echo.
-echo Opcional: para jugar con un amigo por internet,
-echo escribe S y Enter para abrir el tunel Ngrok.
-echo (Enter solo = no, solo local)
-echo ===================================================
-set /p OPEN_NGROK="Abrir Ngrok? (S/Enter): "
-if /i "%OPEN_NGROK%"=="S" (
-  echo Abriendo tunel publico...
-  start "NoMansSky - Tunel Ngrok" cmd /k "ngrok http --domain=itinerary-primer-enjoyer.ngrok-free.dev 5173"
-)
+goto END
 
-echo.
-echo Listo. Puedes cerrar esta ventana.
-pause >nul
+:NGROK
+echo [3] Abriendo tunel publico...
+start "Warspace - Tunel Ngrok" cmd /k "ngrok http --domain=itinerary-primer-enjoyer.ngrok-free.dev 5173"
+
+:END

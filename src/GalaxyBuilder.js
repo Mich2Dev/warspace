@@ -51,6 +51,7 @@ export class GalaxyBuilder {
     
     this.GALAXY_SCALE = 0.15; 
     this.starMarkers = [];
+    this.built = false;
     
     // Generamos textura procedural suave para que los puntos parezcan estrellas/polvo real
     this.particleTexture = this._createSoftParticleTexture();
@@ -73,6 +74,8 @@ export class GalaxyBuilder {
   }
 
   build() {
+    if (this.built) return this.galaxyGroup;
+    this.built = true;
     this._buildGalacticCore();
     this._buildSpiralArms();
     this._buildGalacticDust();

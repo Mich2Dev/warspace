@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Spit preview — serpiente vs astronauta</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0c0908; }
+    canvas { display: block; }
+    #hud {
+      position: fixed; left: 14px; top: 14px; z-index: 2; max-width: 340px;
+      padding: 12px 14px; color: #f3dfc8; font: 13px/1.45 Consolas, monospace;
+      background: #140c0aee; border: 1px solid #ff8a3e66; border-radius: 8px;
+    }
+    #hud b { color: #ff9040; }
+    #hud .ok { color: #7dffa0; }
+    label { display: flex; justify-content: space-between; margin-top: 8px; }
+    input[type="range"] { width: 100%; }
+    button {
+      margin-top: 8px; margin-right: 6px; padding: 7px 12px;
+      background: #2a1208; color: #ffe3c2; border: 1px solid #ff8a3e99;
+      border-radius: 6px; font: 12px Consolas, monospace; cursor: pointer;
+    }
+    button.primary { background: #3d1808; border-color: #ffb060; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <b>VISTA SPIT</b> — mismo VFX que el juego<br />
+    Esfera <span class="ok">cian</span> = boca. Gira cámara / Escupir.
+    <label>Distancia <span id="distLabel">1400</span></label>
+    <input id="dist" type="range" min="500" max="3200" step="50" value="1400" />
+    <label>Lateral X <span id="oxL">0</span></label>
+    <input id="ox" type="range" min="-0.2" max="0.2" step="0.002" value="0" />
+    <label>Arriba Y <span id="oyL">0</span></label>
+    <input id="oy" type="range" min="-0.2" max="0.2" step="0.002" value="0" />
+    <label>Adelante Z <span id="ozL">0</span></label>
+    <input id="oz" type="range" min="-0.25" max="0.35" step="0.002" value="0" />
+    <div>
+      <button id="spit" class="primary">Escupir lava</button>
+      <button id="auto">Auto ON</button>
+      <button id="save">Guardar boca</button>
+    </div>
+    <div id="info">Cargando…</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+    import { LavaDragon } from './src/fauna/LavaDragon.js';
+    import { LavaBreathVFX, BREATH_DURATION } from './src/fauna/LavaBreathVFX.js';
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0706);
+    scene.fog = new THREE.Fog(0x0a0706, 2800, 10000);
+
+    const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 1, 20000);
+    camera.position.set(1100, 320, 1100);
+
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.target.set(500, 120, 0);
+    orbit.update();
+
+    scene.add(new THREE.AmbientLight(0xffc8a0, 0.5));
+    const key = new THREE.DirectionalLight(0xffe0c0, 1.25);
+    key.position.set(400, 900, 300);
+    scene.add(key);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(6000, 64),
+      new THREE.MeshStandardMaterial({ color: 0x1a0e0a, roughness: 0.95 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+
+    const dragon = new LavaDragon({ targetLength: 900 });
+    scene.add(dragon.getObject3D());
+
+    const player = new THREE.Group();
+    scene.add(player);
+    new GLTFLoader().load('/models/astronaut.glb', (gltf) => {
+      const model = gltf.scene;
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const fit = 150 / Math.max(size.y, 1e-4);
+      model.scale.multiplyScalar(fit);
+      model.position.y = -box.min.y * fit;
+      model.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      player.add(model);
+      info.innerHTML = '<span class="ok">Listo.</span> Pulsa Escupir o deja Auto.';
+    }, undefined, () => {
+      const stub = new THREE.Mesh(
+        new THREE.CapsuleGeometry(28, 90, 4, 8),
+        new THREE.MeshStandardMaterial({ color: 0x88aacc })
+      );
+      stub.position.y = 75;
+      player.add(stub);
+    });
+
+    const muzzleMark = new THREE.Mesh(
+      new THREE.SphereGeometry(10, 14, 14),
+      new THREE.MeshBasicMaterial({ color: 0x40ffff, transparent: true, opacity: 0.8 })
+    );
+    scene.add(muzzleMark);
+    const aimLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+      new THREE.LineBasicMaterial({ color: 0xff9944 })
+    );
+    scene.add(aimLine);
+
+    const tcontrols = new TransformControls(camera, renderer.domElement);
+    tcontrols.setMode('translate');
+    tcontrols.setSize(0.75);
+    tcontrols.attach(muzzleMark);
+    if (typeof tcontrols.getHelper === 'function') scene.add(tcontrols.getHelper());
+    else scene.add(tcontrols);
+
+    let dragging = false;
+    tcontrols.addEventListener('dragging-changed', (e) => {
+      dragging = e.value;
+      orbit.enabled = !e.value;
+      if (!e.value && dragon.ready) {
+        dragon.calibrateMuzzleFromWorld(muzzleMark.position);
+        syncSliders();
+        dragon.saveMuzzleCalib();
+      }
+    });
+
+    // Mismo módulo que Mercurio (logDepth off — preview sin logarithmicDepthBuffer)
+    const breath = new LavaBreathVFX(scene, {
+      logDepth: false,
+      baseSize: 64,
+      up: new THREE.Vector3(0, 1, 0)
+    });
+
+    const muzzle = new THREE.Vector3();
+    const aim = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
+    const target = new THREE.Vector3();
+
+    const distInput = document.getElementById('dist');
+    const ox = document.getElementById('ox');
+    const oy = document.getElementById('oy');
+    const oz = document.getElementById('oz');
+    const info = document.getElementById('info');
+
+    function placePlayer(d) {
+      player.position.set(d, 0, 0);
+      player.lookAt(0, 80, 0);
+      document.getElementById('distLabel').textContent = d;
+      orbit.target.set(d * 0.45, 120, 0);
+    }
+    placePlayer(+distInput.value);
+    distInput.oninput = () => placePlayer(+distInput.value);
+
+    function syncSliders() {
+      ox.value = dragon.muzzleOffset.x;
+      oy.value = dragon.muzzleOffset.y;
+      oz.value = dragon.muzzleOffset.z;
+      document.getElementById('oxL').textContent = (+ox.value).toFixed(3);
+      document.getElementById('oyL').textContent = (+oy.value).toFixed(3);
+      document.getElementById('ozL').textContent = (+oz.value).toFixed(3);
+    }
+    function applySliders() {
+      dragon.setMuzzleCalib({ x: +ox.value, y: +oy.value, z: +oz.value });
+      syncSliders();
+    }
+    for (const el of [ox, oy, oz]) el.oninput = applySliders;
+
+    document.getElementById('save').onclick = () => {
+      applySliders();
+      dragon.saveMuzzleCalib();
+      info.innerHTML = '<span class="ok">Boca guardada</span> → recarga el juego.';
+    };
+
+    let auto = true;
+    let autoT = 0.3;
+    document.getElementById('spit').onclick = () => startSpit();
+    document.getElementById('auto').onclick = (e) => {
+      auto = !auto;
+      e.target.textContent = auto ? 'Auto OFF' : 'Auto ON';
+    };
+
+    function startSpit() {
+      if (!dragon.ready) return;
+      breath.start();
+      dragon.setIntent('spit');
+      dragon.holdSpit(0.1);
+    }
+
+    dragon.whenReady().then(() => {
+      const root = dragon.getObject3D();
+      root.position.set(0, 0, 0);
+      root.rotation.y = Math.PI / 2;
+      dragon.setIntent('idle');
+      syncSliders();
+      info.innerHTML = '<span class="ok">Dragón listo.</span> Auto spit activo.';
+    });
+
+    let wasEmitting = false;
+    const clock = new THREE.Clock();
+    function frame() {
+      requestAnimationFrame(frame);
+      const dt = Math.min(0.05, clock.getDelta());
+      dragon.update(dt, 0);
+
+      if (dragon.ready && !dragging) {
+        dragon.getMuzzleLocal(muzzle);
+        dragon.getObject3D().localToWorld(muzzle);
+        muzzleMark.position.copy(muzzle);
+      } else if (dragon.ready) {
+        muzzle.copy(muzzleMark.position);
+      }
+
+      target.copy(player.position).setY(90);
+      aim.copy(target).sub(muzzle);
+      const dist = Math.max(40, aim.length());
+      aim.multiplyScalar(1 / dist);
+      aimLine.geometry.setFromPoints([muzzle.clone(), target.clone()]);
+      aimLine.geometry.attributes.position.needsUpdate = true;
+
+      if (auto) {
+        autoT -= dt;
+        if (autoT <= 0 && !breath.isEmitting) {
+          startSpit();
+          autoT = 2.6;
+        }
+      }
+
+      if (breath.isEmitting) {
+        const u = breath.breathT / Math.max(1e-4, breath.breathDur);
+        const intensity = u < 0.1
+          ? u / 0.1
+          : (u > 0.8 ? Math.max(0, 1 - (u - 0.8) / 0.2) : 1);
+        breath.emitFrame(muzzle, aim, dist, intensity);
+      }
+
+      breath.update(dt, {
+        target,
+        killNear: 180,
+        fadeNear: 450
+      });
+
+      if (wasEmitting && !breath.isEmitting) dragon.releaseSpit();
+      wasEmitting = breath.isEmitting;
+
+      orbit.update();
+      renderer.render(scene, camera);
+    }
+    frame();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>

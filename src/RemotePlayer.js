@@ -10,7 +10,6 @@ export class RemotePlayer {
     const loader = new GLTFLoader();
     loader.load('/nave1.glb', (gltf) => {
       const model = gltf.scene;
-      model.scale.set(42, 42, 42);
       this.mesh.add(model);
     });
     
@@ -35,17 +34,19 @@ export class RemotePlayer {
     });
     
     this.engineParticles = [];
-    for (let i = 0; i < 200; i++) {
+    this._freeParticles = [];
+    for (let i = 0; i < 60; i++) {
       const sprite = new THREE.Sprite(particleMat.clone());
       sprite.visible = false;
-      this.mesh.add(sprite);
-      this.engineParticles.push({
+      const slot = {
         mesh: sprite,
         life: 0,
         maxLife: 0,
         velocity: new THREE.Vector3(),
         baseScale: 1
-      });
+      };
+      this.engineParticles.push(slot);
+      this._freeParticles.push(slot);
     }
     
     this.nozzleSettings = [
@@ -101,16 +102,19 @@ export class RemotePlayer {
     
     // Explosion Particles
     this.explosionParticles = [];
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 80; i++) {
       const sprite = new THREE.Sprite(particleMat.clone());
       sprite.visible = false;
-      this.mesh.add(sprite); // added to mesh so it explodes outward from local center
       this.explosionParticles.push({
         mesh: sprite,
         velocity: new THREE.Vector3(),
         life: 0
       });
     }
+    this._screenPos = new THREE.Vector3();
+    this._toTarget = new THREE.Vector3();
+    this._cameraForward = new THREE.Vector3();
+    this._hudElapsed = 0;
   }
   
   // Se llama cada vez que recibimos un paquete del servidor
@@ -125,6 +129,18 @@ export class RemotePlayer {
     // Interpolar suavemente hacia la posición y rotación real (para evitar lagazos)
     this.mesh.position.lerp(this.targetPosition, 0.3);
     this.mesh.quaternion.slerp(this.targetQuaternion, 0.3);
+
+    // No simular cientos de sprites de jugadores situados en otro planeta.
+    const distanceToLocal = localPosition
+      ? this.mesh.position.distanceTo(localPosition)
+      : Infinity;
+    const isNearby = distanceToLocal < 5000000;
+    this.mesh.visible = isNearby;
+    if (!isNearby) {
+      this.engineLight.intensity = 0;
+      this.marker.style.display = 'none';
+      return;
+    }
     
     // Actualizar sistema de fuego
     if (this.targetFlameScale > 0) {
@@ -135,12 +151,13 @@ export class RemotePlayer {
       
       const particlesToSpawn = Math.floor(this.targetFlameScale * 5); 
       for(let i=0; i<particlesToSpawn; i++) {
-        const p = this.engineParticles.find(p => p.life <= 0);
+        const p = this._freeParticles.pop();
         if (p) {
           const nozzle = this.nozzleSettings[Math.floor(Math.random() * 5)];
           p.mesh.position.copy(nozzle.pos);
           p.mesh.position.x += (Math.random() - 0.5) * nozzle.scale * 0.5;
           p.mesh.position.y += (Math.random() - 0.5) * nozzle.scale * 0.5;
+          if (p.mesh.parent !== this.mesh) this.mesh.add(p.mesh);
           p.mesh.visible = true;
           p.life = 0.2 + Math.random() * 0.2;
           p.maxLife = p.life;
@@ -168,6 +185,8 @@ export class RemotePlayer {
         p.mesh.material.opacity = ratio;
         if (p.life <= 0) {
           p.mesh.visible = false;
+          this.mesh.remove(p.mesh);
+          this._freeParticles.push(p);
         }
       }
     }
@@ -179,19 +198,22 @@ export class RemotePlayer {
         ep.mesh.position.addScaledVector(ep.velocity, delta);
         ep.mesh.scale.setScalar(ep.life * 20); // Shrinks over time
         ep.mesh.material.opacity = ep.life;
-        if (ep.life <= 0) ep.mesh.visible = false;
+        if (ep.life <= 0) {
+          ep.mesh.visible = false;
+          this.mesh.remove(ep.mesh);
+        }
       }
     }
     
     // Update HUD Marker position
-    if (camera && localPosition) {
-      const dist = this.mesh.position.distanceTo(localPosition);
-      this.distLabel.innerText = Math.round(dist) + 'm';
+    this._hudElapsed += delta;
+    if (camera && localPosition && this._hudElapsed >= 0.1) {
+      this._hudElapsed = 0;
+      this.distLabel.innerText = Math.round(distanceToLocal) + 'm';
       
-      const screenPos = this.mesh.position.clone();
-      
-      const toTarget = new THREE.Vector3().subVectors(screenPos, camera.position).normalize();
-      const cameraForward = new THREE.Vector3();
+      const screenPos = this._screenPos.copy(this.mesh.position);
+      const toTarget = this._toTarget.subVectors(screenPos, camera.position).normalize();
+      const cameraForward = this._cameraForward;
       camera.getWorldDirection(cameraForward);
       
       screenPos.project(camera);
@@ -232,6 +254,7 @@ export class RemotePlayer {
     
     // Trigger Explosion
     for (const ep of this.explosionParticles) {
+      if (ep.mesh.parent !== this.mesh) this.mesh.add(ep.mesh);
       ep.mesh.position.set(0, 0, 0); // Start at ship center
       ep.velocity.set(
         (Math.random() - 0.5) * 500,

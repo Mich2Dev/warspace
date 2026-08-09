@@ -7,14 +7,12 @@ import { io } from 'socket.io-client';
 import { RemotePlayer } from './RemotePlayer.js';
 import { MobileController } from './MobileController.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { GalaxyBuilder } from './GalaxyBuilder.js';
 import { Skybox } from './Skybox.js';
 import { gameAudio } from './GameAudio.js';
-import { WeatherSystem } from './WeatherSystem.js';
 import { SurfaceWalker } from './SurfaceWalker.js';
+import { LavaDragonFaunaManager } from './fauna/LavaDragonFaunaManager.js';
+import { PerformanceGovernor } from './PerformanceGovernor.js';
 
 // Setup Keybindings Configuration
 const defaultKeys = {
@@ -38,6 +36,12 @@ window.GameConfig.keys = { ...defaultKeys, ...window.GameConfig.keys };
 const scene = new THREE.Scene();
 // No fog in deep space!
 scene.fog = null;
+const _deepSpaceColor = new THREE.Color(0x000000);
+const _fogColor = new THREE.Color();
+const _atmoBackground = new THREE.Color();
+const _toxicFogTint = new THREE.Color(0x88ff44);
+const _lavaFogTint = new THREE.Color(0xff4400);
+const _atmoFog = new THREE.Fog(0x000000, 800, 70000);
 
 // Add procedural galaxy background
 const skybox = new Skybox(scene);
@@ -52,21 +56,12 @@ mapCamera.lookAt(0, 0, 0);
 // Renderer — nitidez sin saturar GPU en pantallas HiDPI
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.15;
 document.body.appendChild(renderer.domElement);
 
-// Bloom solo para soles/motores/láseres — no lavar el terreno
-const renderScene = new RenderPass(scene, camera);
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.2, 0.35, 0.9);
-bloomPass.threshold = 0.55;
-bloomPass.strength = 0.55;
-bloomPass.radius = 0.45;
-
-const composer = new EffectComposer(renderer);
-composer.addPass(renderScene);
-composer.addPass(bloomPass);
+const performanceGovernor = new PerformanceGovernor(renderer);
 
 // ==========================================
 // Spark Particle System for Collisions
@@ -133,7 +128,7 @@ window.createSparks = function(position, normal, intensity) {
 const mapControls = new OrbitControls(mapCamera, renderer.domElement);
 mapControls.enabled = false;
 mapControls.enableDamping = true;
-mapControls.maxDistance = 60000000; // Limite más allá de Neptuno
+mapControls.maxDistance = 600000000; // Más allá de Neptuno (~300M)
 mapControls.minDistance = 1000000;
 mapControls.target.set(0, 0, 0);
 
@@ -148,7 +143,8 @@ scene.add(mapVisuals);
 // Se escala para que el sistema solar (~300M unidades) quepa en el bulbo central.
 // ===========================================================================
 const galaxyBuilder = new GalaxyBuilder(scene);
-const galaxyGroup = galaxyBuilder.build();
+// La Vía Láctea (~420k partículas) se crea solo al abrirla por primera vez.
+const galaxyGroup = galaxyBuilder.galaxyGroup;
 // El mapa galáctico cambia al modo "vista galáctica" donde la galaxia
 // se posiciona para ver desde arriba. Escalarla para que llene la vista.
 // Radio galáctico en Three.js units: ~50000 años luz * 0.15 = 7500 unidades de galaxia
@@ -157,36 +153,23 @@ const GALAXY_MAP_SCALE = 20000; // Factor para que la galaxia llene el mapa gal�
 galaxyGroup.scale.setScalar(GALAXY_MAP_SCALE);
 galaxyGroup.visible = false; // Solo visible en modo mapa galáctico
 
-// Local Surface Minimap (Top-Down Orthographic Radar)
-// Covers a 10km x 10km area of the surface
-const localMapCamera = new THREE.OrthographicCamera(-5000, 5000, 5000, -5000, 0.1, 50000);
+// Local Surface Radar (2D; no segundo render 3D)
+const minimapBorderEl = document.getElementById('minimap-border');
+const surfaceRadarCanvas = document.createElement('canvas');
+surfaceRadarCanvas.width = 250;
+surfaceRadarCanvas.height = 250;
+surfaceRadarCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:.9';
+minimapBorderEl?.insertBefore(surfaceRadarCanvas, minimapBorderEl.firstChild);
+const surfaceRadarCtx = surfaceRadarCanvas.getContext('2d');
 
 let isMapMode = false;
-const mapVisibilitySnapshot = new Map();
-
-function restoreMapVisibility() {
-  for (const [object, wasVisible] of mapVisibilitySnapshot) {
-    if (object?.parent) object.visible = wasVisible;
-  }
-  mapVisibilitySnapshot.clear();
-}
-
-function hideLocalSceneForGalaxyMap() {
-  restoreMapVisibility();
-  for (const child of scene.children) {
-    if (child === galaxyGroup) continue;
-    mapVisibilitySnapshot.set(child, child.visible);
-    child.visible = false;
-  }
-}
-
 // Ensure legacy lighting so PointLight doesn't decay to zero over 300,000 units
 renderer.useLegacyLights = true;
 if (renderer.useLegacyLights === undefined) {
   renderer.physicallyCorrectLights = false;
 }
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setPixelRatio(performanceGovernor.ratio);
 document.getElementById('app').appendChild(renderer.domElement);
 
 // Lighting (Realistic space lighting from the Sun)
@@ -236,6 +219,16 @@ function doLogin(user, pass) {
   errorEl.style.display = 'block';
   errorEl.innerText = "Conectando al servidor...";
   socket.emit('login', { username: user, password: pass });
+
+  // Si el servidor no responde, no dejes el botón colgado para siempre
+  clearTimeout(doLogin._timeout);
+  doLogin._timeout = setTimeout(() => {
+    if (loginInFlight && !isLoggedIn) {
+      loginInFlight = false;
+      errorEl.style.display = 'block';
+      errorEl.innerText = "Sin respuesta del servidor. ¿Está corriendo start.bat / node server.js?";
+    }
+  }, 8000);
 }
 
 // Prefill + auto-login after full page reload / HMR reconnect
@@ -272,6 +265,7 @@ socket.on('connect', () => {
 socket.on('login_success', (playerData) => {
   isLoggedIn = true;
   loginInFlight = false;
+  clearTimeout(doLogin._timeout);
   const user = document.getElementById('login-username').value.trim();
   const pass = document.getElementById('login-password').value.trim();
   if (user && pass) {
@@ -280,19 +274,8 @@ socket.on('login_success', (playerData) => {
   document.getElementById('login-screen').style.display = 'none';
   document.querySelector('.ui').style.display = 'block';
   
-  // Handle Player Position Initialization
-  let distToSun = 0;
-  if (playerData.position) {
-    distToSun = Math.sqrt(playerData.position.x**2 + playerData.position.y**2 + playerData.position.z**2);
-  }
-
-  if (playerData.position && distToSun > 11500000) {
-    spaceship.mesh.position.set(playerData.position.x, playerData.position.y, playerData.position.z);
-    spaceship.mesh.lookAt(0, 0, 0); // Always face the sun initially
-  } else {
-    // NUEVO JUGADOR: Hacer spawn en la órbita de la Tierra
-    spawnAtEarth();
-  }
+  // Restaurar última posición, o cerca de Mercurio si no hay guardado
+  spawnPlayer();
   
   // Provide a global function to respawn the player without reloading the page
   window.respawnPlayer = () => {
@@ -303,29 +286,11 @@ socket.on('login_success', (playerData) => {
     spaceship.autopilotEngaged = false;
     spaceship.autoTarget = null;
     
-    spawnAtEarth();
+    spawnAtMercury();
     
     // Attempt to relock the pointer
     document.body.requestPointerLock();
   };
-  
-  function spawnAtEarth() {
-    const earth = planets.find(p => p.name === "Tierra");
-    if (earth) {
-      const universalTime = Date.now() / 1000;
-      const currentAngle = earth.orbitAngleOffset + (earth.orbitSpeed * universalTime);
-      const incRad = earth.inclination ? (earth.inclination * Math.PI / 180) : 0;
-      const ex = Math.cos(currentAngle) * earth.orbitRadius;
-      const ey = -Math.sin(currentAngle) * earth.orbitRadius * Math.sin(incRad);
-      const ez = Math.sin(currentAngle) * earth.orbitRadius * Math.cos(incRad);
-      
-      // Aparecer a un lado de la Tierra, no directamente arriba (para evitar el bug de rotación NaN)
-      spaceship.mesh.position.set(ex + earth.radius * 2.5, ey, ez + earth.radius * 2.5);
-      
-      // Voltear a ver a la Tierra majestuosamente
-      spaceship.mesh.lookAt(ex, ey, ez);
-    }
-  }
   
   // Restore HP if exists
   if (playerData.hp !== undefined) {
@@ -338,6 +303,7 @@ socket.on('login_success', (playerData) => {
 
 socket.on('login_failed', (data) => {
   loginInFlight = false;
+  clearTimeout(doLogin._timeout);
   const errorEl = document.getElementById('login-error');
   errorEl.style.display = 'block';
   errorEl.innerText = data?.message || 'Error de login';
@@ -345,9 +311,20 @@ socket.on('login_failed', (data) => {
 
 socket.on('login_error', (msg) => {
   loginInFlight = false;
+  clearTimeout(doLogin._timeout);
   const errorEl = document.getElementById('login-error');
   errorEl.style.display = 'block';
   errorEl.innerText = typeof msg === 'string' ? msg : (msg?.message || 'Error');
+});
+
+socket.on('connect_error', () => {
+  if (loginInFlight && !isLoggedIn) {
+    loginInFlight = false;
+    clearTimeout(doLogin._timeout);
+    const errorEl = document.getElementById('login-error');
+    errorEl.style.display = 'block';
+    errorEl.innerText = 'No se pudo conectar al servidor. Arranca start.bat.';
+  }
 });
 
 
@@ -439,7 +416,8 @@ function createStars() {
   legacyStars = new THREE.Points(geometry, material);
   scene.add(legacyStars);
 }
-createStars();
+// Skybox ya aporta 7.600 estrellas texturizadas. No crear otras 150.000
+// duplicadas: consumían memoria y fill-rate durante todo el juego.
 
 function setStarFieldOpacity(opacity) {
   const o = THREE.MathUtils.clamp(opacity, 0, 1);
@@ -468,21 +446,17 @@ for (let i = 0; i < 2000; i++) {
 
 // Initialize Spaceship
 const spaceship = new Spaceship(scene, camera);
-const weatherSystem = new WeatherSystem(scene);
 const surfaceWalker = new SurfaceWalker(scene, camera);
-let immersionWeather = 0;
 
 // Iniciar Controles Móviles (Si está en celular)
 const mobileController = new MobileController(spaceship);
-// Spawn the spaceship near Earth's orbit (safe distance from the Sun)
-spaceship.mesh.position.set(60000000, 100000, 0);
-spaceship.mesh.lookAt(0, 0, 0);
+// La posición real se fija con spawnAtEarth() cuando existan los planetas.
 
 // Initialize Procedural Solar System (Hybrid Scale)
 const planets = [];
 
 const solarSystemData = [
-  { name: "Mercurio", radius: 7600 * 25, distance: 30000000, color: 0x888888, speed: 0.0008, inclination: 7.00, biome: 'Lava', desc: "Planeta rocoso. Es el más pequeño y cercano al Sol." },
+  { name: "Mercurio", radius: 7600 * 25, distance: 30000000, color: 0x4a2218, speed: 0.0008, inclination: 7.00, biome: 'Lava', desc: "Planeta rocoso. Es el más pequeño y cercano al Sol." },
   { name: "Venus", radius: 19000 * 25, distance: 45000000, color: 0xe3bb76, speed: 0.0006, inclination: 3.39, biome: 'Toxic', desc: "Planeta rocoso. Atmósfera tóxica." },
   { name: "Tierra", radius: 20000 * 25, distance: 60000000, color: 0x2b82c9, speed: 0.0005, inclination: 0.00, biome: 'Terran', moons: [{ name: "Luna", radius: 5500 * 25, dist: 1000000, speed: 0.005, color: 0x888888, biome: 'Desert' }], desc: "Planeta rocoso. Nuestro hogar." },
   { name: "Marte", radius: 10600 * 25, distance: 80000000, color: 0xc1440e, speed: 0.0004, inclination: 1.85, biome: 'Desert', desc: "Planeta rocoso. El 'Planeta Rojo'." },
@@ -544,6 +518,20 @@ solarSystemData.forEach((data, index) => {
   }
 });
 
+// Fauna volcánica: LavaDragon en Mercurio
+let lavaDragonFauna = null;
+{
+  const mercurio = planets.find(p => p.name === 'Mercurio' && p.biome === 'Lava');
+  if (mercurio) {
+    lavaDragonFauna = new LavaDragonFaunaManager(mercurio.group, mercurio.radius, mercurio.biome, 1);
+    lavaDragonFauna.onPlayerHit = (amount) => {
+      if (spaceship && typeof spaceship.takeDamage === 'function') {
+        spaceship.takeDamage(amount);
+      }
+    };
+  }
+}
+
 // PRNG Determinista para sincronización de Asteroides
 // Hitboxes for map clicking
 const planetHitboxes = [];
@@ -560,6 +548,147 @@ for (const p of planets) {
 }
 
 let targetPlanet = null;
+
+function formatDist(meters) {
+  const abs = Math.abs(meters);
+  if (abs >= 1e6) return (meters / 1e6).toFixed(1) + ' Mm';
+  if (abs >= 1e3) return (meters / 1e3).toFixed(0) + ' km';
+  return Math.round(meters) + ' m';
+}
+
+function updateLocationHud(closestPlanet, minDist) {
+  const nearEl = document.getElementById('loc-near');
+  const earthEl = document.getElementById('loc-earth');
+  const hud = document.getElementById('location-hud');
+  if (!nearEl || !earthEl || !hud) return;
+  hud.style.display = isMapMode ? 'none' : 'block';
+
+  if (closestPlanet) {
+    const alt = minDist - closestPlanet.radius;
+    const zone = alt < 0
+      ? 'bajo superficie'
+      : alt < closestPlanet.radius * 0.12
+        ? 'atmósfera'
+        : alt < closestPlanet.radius * 0.8
+          ? 'órbita baja'
+          : 'espacio cercano';
+    nearEl.textContent = `Cerca: ${closestPlanet.name} · ${formatDist(alt)} (${zone})`;
+  } else {
+    nearEl.textContent = 'Cerca: espacio profundo';
+  }
+
+  const earth = planets.find(p => p.name === 'Tierra');
+  if (earth) {
+    const d = spaceship.mesh.position.distanceTo(earth.group.position) - earth.radius;
+    earthEl.textContent = `Tierra: ${formatDist(d)}`;
+  }
+}
+
+/** Siempre pone la nave cerca de Mercurio (órbita cercana), mirando al planeta. */
+function spawnAtMercury() {
+  const mercurio = planets.find(p => p.name === 'Mercurio');
+  if (!mercurio) {
+    spawnAtEarth();
+    return;
+  }
+  const universalTime = Date.now() / 1000;
+  const currentAngle = mercurio.orbitAngleOffset + (mercurio.orbitSpeed * universalTime);
+  const incRad = mercurio.inclination ? (mercurio.inclination * Math.PI / 180) : 0;
+  const mx = Math.cos(currentAngle) * mercurio.orbitRadius;
+  const my = -Math.sin(currentAngle) * mercurio.orbitRadius * Math.sin(incRad);
+  const mz = Math.sin(currentAngle) * mercurio.orbitRadius * Math.cos(incRad);
+  const offset = mercurio.radius * 2.2;
+  spaceship.mesh.position.set(mx + offset, my + mercurio.radius * 0.2, mz);
+  spaceship.mesh.lookAt(mx, my, mz);
+  spaceship.speed = 0;
+  spaceship.mode = 'FLIGHT';
+  spaceship.isLanded = false;
+  spaceship.onFoot = false;
+  spaceship.hoverPlanet = null;
+  spaceship.yawAccumulator = 0;
+  spaceship.pitchAccumulator = 0;
+  saveShipPose();
+}
+
+const SHIP_POSE_KEY = 'jg_ship_pose_v2';
+
+function saveShipPose() {
+  try {
+    const p = spaceship.mesh.position;
+    localStorage.setItem(SHIP_POSE_KEY, JSON.stringify({
+      x: p.x, y: p.y, z: p.z,
+      yaw: spaceship.yawAccumulator || 0,
+      pitch: spaceship.pitchAccumulator || 0,
+      t: Date.now()
+    }));
+  } catch {}
+}
+
+function restoreShipPose() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SHIP_POSE_KEY) || 'null');
+    if (!raw || !Number.isFinite(raw.x)) return false;
+    spaceship.mesh.position.set(raw.x, raw.y, raw.z);
+    spaceship.yawAccumulator = raw.yaw || 0;
+    spaceship.pitchAccumulator = raw.pitch || 0;
+    spaceship.speed = 0;
+    spaceship.mode = 'FLIGHT';
+    spaceship.isLanded = false;
+    spaceship.onFoot = false;
+    spaceship.hoverPlanet = null;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Arranque: última pose solo si estás cerca de Mercurio; si no, respawn ahí. */
+function spawnPlayer() {
+  const mercurio = planets.find(p => p.name === 'Mercurio');
+  const restored = restoreShipPose();
+  if (!restored || !mercurio) {
+    spawnAtMercury();
+    return;
+  }
+  const d = spaceship.mesh.position.distanceTo(mercurio.group.position);
+  // Pose guardada en el vacío / otro planeta → volver a Mercurio
+  if (d > mercurio.radius * 6) {
+    spawnAtMercury();
+  }
+}
+
+/** Siempre pone la nave fuera de la Tierra (órbita cercana), mirando al planeta. */
+function spawnAtEarth() {
+  const earth = planets.find(p => p.name === 'Tierra');
+  if (!earth) {
+    spaceship.mesh.position.set(60000000 + 1250000, 0, 1250000);
+    spaceship.mesh.lookAt(60000000, 0, 0);
+    return;
+  }
+  const universalTime = Date.now() / 1000;
+  const currentAngle = earth.orbitAngleOffset + (earth.orbitSpeed * universalTime);
+  const incRad = earth.inclination ? (earth.inclination * Math.PI / 180) : 0;
+  const ex = Math.cos(currentAngle) * earth.orbitRadius;
+  const ey = -Math.sin(currentAngle) * earth.orbitRadius * Math.sin(incRad);
+  const ez = Math.sin(currentAngle) * earth.orbitRadius * Math.cos(incRad);
+  // A ~2.5 radios del centro: fuera de atmósfera, Tierra grande y visible
+  const offset = earth.radius * 2.5;
+  spaceship.mesh.position.set(ex + offset, ey + earth.radius * 0.15, ez);
+  spaceship.mesh.lookAt(ex, ey, ez);
+  spaceship.speed = 0;
+  spaceship.mode = 'FLIGHT';
+  spaceship.isLanded = false;
+  spaceship.onFoot = false;
+  spaceship.hoverPlanet = null;
+  spaceship.yawAccumulator = 0;
+  spaceship.pitchAccumulator = 0;
+  saveShipPose();
+}
+window.spawnAtEarth = spawnAtEarth;
+window.spawnAtMercury = spawnAtMercury;
+window.spawnPlayer = spawnPlayer;
+spawnPlayer(); // Arranque: última pose o Mercurio
+
 const raycaster = new THREE.Raycaster();
 // Reused for planet collision / camera clamp (creating Raycaster every frame was lagging hard)
 const terrainRaycaster = new THREE.Raycaster();
@@ -568,6 +697,10 @@ const _rayStart = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
 const _localDir = new THREE.Vector3();
 const _quatInv = new THREE.Quaternion();
+const _oldPlanetPos = new THREE.Vector3();
+const _deltaPlanetPos = new THREE.Vector3();
+const _planetSurfaceDir = new THREE.Vector3();
+const _cameraSurfaceDir = new THREE.Vector3();
 const pointer = new THREE.Vector2();
 
 // Selection ring for map mode
@@ -616,20 +749,19 @@ window.addEventListener('keydown', (e) => {
   if (e.code === window.GameConfig.keys.land || e.code === 'KeyE') {
     if (spaceship.mode === 'HOVER' || spaceship.onFoot || surfaceWalker.active) {
       if (surfaceWalker.active || spaceship.onFoot) {
-        surfaceWalker.tryToggle(spaceship, keys);
+        surfaceWalker.tryToggle(spaceship);
       } else if (spaceship.isLanded) {
-        surfaceWalker.tryToggle(spaceship, keys);
+        surfaceWalker.tryToggle(spaceship);
       } else if (e.code === window.GameConfig.keys.land) {
         spaceship.toggleLanding();
       } else if (e.code === 'KeyE' && spaceship.hoverPlanet) {
         // E en hover: aterriza y baja en un paso
         spaceship.toggleLanding();
-        surfaceWalker.tryToggle(spaceship, keys);
+        surfaceWalker.tryToggle(spaceship);
       }
     }
   }
-  if (e.code === window.GameConfig.keys.map && !e.repeat) {
-    e.preventDefault();
+  if (e.code === window.GameConfig.keys.map) {
     isMapMode = !isMapMode;
     if (isMapMode) {
       document.exitPointerLock();
@@ -642,7 +774,14 @@ window.addEventListener('keydown', (e) => {
       document.getElementById('map-mode-label').style.display = 'block';
       document.getElementById('map-mode-label').innerText = 'MAPA: SISTEMA SOLAR | [G] = VISTA GALÁCTICA';
     } else {
-      restoreMapVisibility();
+      // Si estábamos en el mapa de la galaxia, restauramos los objetos locales antes de salir
+      if (galaxyGroup.visible) {
+        scene.children.forEach(child => {
+          if (child !== galaxyGroup && child.userData.wasVisible !== undefined) {
+            child.visible = child.userData.wasVisible;
+          }
+        });
+      }
       
       document.body.requestPointerLock();
       document.body.style.cursor = 'default';
@@ -663,15 +802,20 @@ window.addEventListener('keydown', (e) => {
   }
   
   // Toggle Galaxy View (only while in map mode)
-  if (e.code === 'KeyG' && isMapMode && !e.repeat) {
-    e.preventDefault();
+  if (e.code === 'KeyG' && isMapMode) {
     const isGalaxyView = galaxyGroup.visible;
     if (!isGalaxyView) {
       // Switch to Galaxy View
+      galaxyBuilder.build();
       galaxyGroup.visible = true;
       
-      // Snapshot exacto; evita dejar cielo/nave/planetas ocultos al salir.
-      hideLocalSceneForGalaxyMap();
+      // Hide all local solar system objects (planets, ship, sun, etc.)
+      scene.children.forEach(child => {
+        if (child !== galaxyGroup) {
+          child.userData.wasVisible = child.visible;
+          child.visible = false;
+        }
+      });
       
       // Position galaxy map camera high above to see the whole galaxy disk
       mapCamera.position.set(0, 250000000, 50000000);
@@ -684,7 +828,12 @@ window.addEventListener('keydown', (e) => {
       // Back to Solar System View
       galaxyGroup.visible = false;
       
-      restoreMapVisibility();
+      // Restore all local solar system objects
+      scene.children.forEach(child => {
+        if (child !== galaxyGroup && child.userData.wasVisible !== undefined) {
+          child.visible = child.userData.wasVisible;
+        }
+      });
       
       mapCamera.position.set(0, 250000000, 0);
       mapCamera.up.set(0, 0, -1);
@@ -979,8 +1128,7 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   mapCamera.aspect = window.innerWidth / window.innerHeight;
   mapCamera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
+  performanceGovernor.resize();
 });
 
 // ==========================================
@@ -1034,18 +1182,41 @@ socket.on('chat_message', (data) => {
 const clock = new THREE.Clock();
 let lastNetworkTick = 0;
 let lastAmbientAudioTick = 0;
+let lastHudTick = 0;
+let lastLocalMapRender = 0;
+const _localMapForward = new THREE.Vector3();
+const _radarPlayerLocal = new THREE.Vector3();
+const _radarUp = new THREE.Vector3();
+const _radarFwd = new THREE.Vector3();
+const _radarRight = new THREE.Vector3();
+const _radarDelta = new THREE.Vector3();
+const _radarWorld = new THREE.Vector3();
+const _radarInv = new THREE.Matrix4();
+const RADAR_RANGE = 4500; // metros de superficie cubiertos por el círculo
+const DRAGON_GUIDE_MIN_DIST = 2800; // letrero en pantalla solo si está más lejos
+const DRAGON_RADAR_LABEL_DIST = 900; // en radar: nombre solo lejos; distancia siempre
 
 function animate() {
   requestAnimationFrame(animate);
 
-  const delta = clock.getDelta();
+  const frameDelta = clock.getDelta();
+  performanceGovernor.update(frameDelta);
+  // Evita saltos de física/LOD después de una pausa o frame muy pesado.
+  const delta = Math.min(frameDelta, 0.05);
   const time = clock.getElapsedTime();
+
+  // Guardar posición cada ~2s para no perder el progreso al recargar
+  if (!animate._poseAcc) animate._poseAcc = 0;
+  animate._poseAcc += delta;
+  if (animate._poseAcc > 2) {
+    animate._poseAcc = 0;
+    if (!spaceship.isDead) saveShipPose();
+  }
   
   // Update Global Terrain Shader Time for procedural water and lava
   globalTerrainUniforms.time.value = time;
 
-  // Animate galaxy (always runs, invisible when not in map mode)
-  galaxyBuilder.update(delta);
+  if (galaxyGroup.visible) galaxyBuilder.update(delta);
   // ALWAYS UPDATE PHYSICS AND ORBITS (even in map mode!)
   if (!isMapMode) {
     // Determine active keys
@@ -1098,8 +1269,14 @@ function animate() {
     }
     if (isPointerLocked || mobileController.isMobile) {
       spaceship.update(delta, activeKeys);
+      if (surfaceWalker.active) {
+        surfaceWalker.update(delta, activeKeys);
+      }
     } else {
       spaceship.update(delta, {});
+      if (surfaceWalker.active) {
+        surfaceWalker.update(delta, {});
+      }
     }
 
     // Broadcast telemetry to server (20 times per second)
@@ -1172,7 +1349,7 @@ function animate() {
 
   for (const p of planets) {
     // 1. Update Orbit
-    const oldPos = p.group.position.clone();
+    _oldPlanetPos.copy(p.group.position);
 
     // Instead of using delta which desyncs clients, use absolute universal time
     const currentAngle = p.orbitAngleOffset + (p.orbitSpeed * universalTime);
@@ -1195,15 +1372,15 @@ function animate() {
     // Rotación sobre su propio eje (Ciclo Día/Noche sincronizado)
     p.group.rotation.y = universalTime * 0.005;
 
-    const deltaPos = p.group.position.clone().sub(oldPos);
+    const deltaPos = _deltaPlanetPos.subVectors(p.group.position, _oldPlanetPos);
 
     // Update hitbox position to match planet
     const hitbox = planetHitboxes.find(h => h.userData.planet === p);
     if (hitbox) hitbox.position.copy(p.group.position);
     
-    // 2. Asteroid Ring Collisions
-    if (p.rings && p.rings.userData.collisionData) {
-        // Ensure matrices are updated after moving the planet
+    // 2. Asteroid Ring Collisions (solo cerca — updateMatrixWorld es caro)
+    if (p.rings && p.rings.userData.collisionData &&
+        spaceship.mesh.position.distanceToSquared(p.group.position) < (p.radius * 3.2) ** 2) {
         p.group.updateMatrixWorld(true);
         
         const shipWorldPos = new THREE.Vector3();
@@ -1273,16 +1450,22 @@ function animate() {
 
     // 2. Relative Physics: Inherit orbital velocity if inside gravity well or anchored!
     const distForDrag = spaceship.mesh.position.distanceTo(p.group.position);
-    if ((spaceship.mode === 'HOVER' && spaceship.hoverPlanet === p) || distForDrag < p.radius * 2.0) {
+    if (spaceship.mode === 'HOVER' && spaceship.hoverPlanet === p && spaceship.isLanded) {
+      spaceship.syncLandedToPlanetTransform();
+    } else if ((spaceship.mode === 'HOVER' && spaceship.hoverPlanet === p) || distForDrag < p.radius * 2.0) {
       spaceship.mesh.position.add(deltaPos);
       spaceship.camera.position.add(deltaPos); // Prevent camera lagging behind the moving ship
     }
-    // El caminante es hijo de planet.group → órbita/spin se heredan solos.
+    // Personaje y nave usan la misma coordenada local: no se separan ni son
+    // arrastrados por la superficie al rotar/orbitar el planeta.
+    if (surfaceWalker.active && surfaceWalker.planet === p) {
+      surfaceWalker.syncToPlanetTransform();
+    }
 
     // 3. Collision Detection — prefer cheap math; raycast only when very close to surface
     const distToPlanet = spaceship.mesh.position.distanceTo(p.group.position);
     if (distToPlanet < p.radius * 1.25) {
-      const dirFromPlanet = new THREE.Vector3().subVectors(spaceship.mesh.position, p.group.position).normalize();
+      const dirFromPlanet = _planetSurfaceDir.subVectors(spaceship.mesh.position, p.group.position).normalize();
       _quatInv.copy(p.group.quaternion).invert();
       _localDir.copy(dirFromPlanet).applyQuaternion(_quatInv);
 
@@ -1316,7 +1499,7 @@ function animate() {
     // FIX CAMERA CLIPPING — margen amplio + elevar boom si hace falta
     const cameraDist = spaceship.camera.position.distanceTo(p.group.position);
     if (cameraDist < p.radius * 1.35) {
-       const dirFromPlanetToCamera = new THREE.Vector3().subVectors(spaceship.camera.position, p.group.position).normalize();
+       const dirFromPlanetToCamera = _cameraSurfaceDir.subVectors(spaceship.camera.position, p.group.position).normalize();
        _quatInv.copy(p.group.quaternion).invert();
        _localDir.copy(dirFromPlanetToCamera).applyQuaternion(_quatInv);
 
@@ -1346,13 +1529,6 @@ function animate() {
     }
   }
   
-  // A pie: DESPUÉS de orbitas/spin, con teclas globales (activeKeys vive
-  // solo dentro de !isMapMode y aquí reventaba el frame → “se pegó”).
-  if (!isMapMode && surfaceWalker.active) {
-    const walkKeys = mobileController.isMobile ? mobileController.keys : keys;
-    surfaceWalker.update(delta, walkKeys);
-  }
-
   // Apply Re-entry Shield visual effect and camera shake
   if (spaceship.shieldUniforms) {
       spaceship.shieldUniforms.intensity.value = THREE.MathUtils.lerp(
@@ -1371,7 +1547,7 @@ function animate() {
   }
   
   // Update Galaxy Skybox
-  skybox.update(universalTime, camera.position);
+  skybox.update(universalTime);
   
   // Update Sparks
   for (let i = activeSparks.length - 1; i >= 0; i--) {
@@ -1399,22 +1575,20 @@ function animate() {
       }
   }
 
-  // Update Space Dust endless wrapping field
-  const positions = spaceDust.geometry.attributes.position.array;
-  const shipPos = spaceship.mesh.position;
-  let dustUpdated = false;
-  for (let i = 0; i < 2000; i++) {
-    const px = positions[i * 3];
-    const py = positions[i * 3 + 1];
-    const pz = positions[i * 3 + 2];
-
-    // Wrap around logic: if a particle is too far behind the ship, spawn it in front
-    if (Math.abs(px - shipPos.x) > 2000) { positions[i * 3] = shipPos.x + Math.sign(shipPos.x - px) * 2000; dustUpdated = true; }
-    if (Math.abs(py - shipPos.y) > 2000) { positions[i * 3 + 1] = shipPos.y + Math.sign(shipPos.y - py) * 2000; dustUpdated = true; }
-    if (Math.abs(pz - shipPos.z) > 2000) { positions[i * 3 + 2] = shipPos.z + Math.sign(shipPos.z - pz) * 2000; dustUpdated = true; }
-  }
-  if (dustUpdated) {
-    spaceDust.geometry.attributes.position.needsUpdate = true;
+  // Polvo espacial: no actualizar 2000 puntos/frame si esta oculto
+  if (spaceDust.visible) {
+    const positions = spaceDust.geometry.attributes.position.array;
+    const shipPos = spaceship.mesh.position;
+    let dustUpdated = false;
+    for (let i = 0; i < 2000; i++) {
+      const px = positions[i * 3];
+      const py = positions[i * 3 + 1];
+      const pz = positions[i * 3 + 2];
+      if (Math.abs(px - shipPos.x) > 2000) { positions[i * 3] = shipPos.x + Math.sign(shipPos.x - px) * 2000; dustUpdated = true; }
+      if (Math.abs(py - shipPos.y) > 2000) { positions[i * 3 + 1] = shipPos.y + Math.sign(shipPos.y - py) * 2000; dustUpdated = true; }
+      if (Math.abs(pz - shipPos.z) > 2000) { positions[i * 3 + 2] = shipPos.z + Math.sign(shipPos.z - pz) * 2000; dustUpdated = true; }
+    }
+    if (dustUpdated) spaceDust.geometry.attributes.position.needsUpdate = true;
   }
 
   // Stretch dust particles into lines based on ship speed and direction
@@ -1439,57 +1613,101 @@ function animate() {
           closestPlanet = p;
       }
     });
+
+    if (lavaDragonFauna) {
+      const focusPos = (surfaceWalker.active && surfaceWalker.root)
+        ? surfaceWalker.root.position
+        : spaceship.mesh.position;
+      lavaDragonFauna.update(focusPos, spaceship.speed, delta);
+    }
     
-    // Atmósfera: cielo siempre claro (sin ciclo día/noche)
+    // Atmósfera solo cerca de la superficie. En órbita / espacio: cielo negro
+    // y sin niebla para que se vean los demás planetas a lo lejos.
+    let inDeepSpace = true;
     if (closestPlanet) {
         const alt = minDist - closestPlanet.radius;
-        const atmLimit = closestPlanet.radius * 0.18;
+        const atmLimit = closestPlanet.radius * 0.12; // ~60k en Tierra
+        inDeepSpace = alt >= atmLimit;
         
-        if (alt < atmLimit) {
+        if (alt < atmLimit && alt > -closestPlanet.radius * 0.05) {
             const t = THREE.MathUtils.clamp(Math.max(0, alt) / atmLimit, 0.0, 1.0);
             const blend = 1.0 - t * t;
-            
-            const fogColor = new THREE.Color(closestPlanet.color).multiplyScalar(0.7);
-            if (closestPlanet.biome === 'Terran') fogColor.setHex(0x6eb6ff);
-            if (closestPlanet.biome === 'Toxic') fogColor.lerp(new THREE.Color(0x88ff44), 0.25);
-            if (closestPlanet.biome === 'Lava') fogColor.lerp(new THREE.Color(0xff4400), 0.2);
-            
-            const fogNear = THREE.MathUtils.lerp(closestPlanet.radius * 0.15, 800, blend);
-            const fogFar = THREE.MathUtils.lerp(closestPlanet.radius * 1.6, 70000, blend);
-            
-            scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
-            scene.background = fogColor.clone().multiplyScalar(0.85 + blend * 0.15);
-            setStarFieldOpacity(1.0 - blend);
+            const isLava = closestPlanet.biome === 'Lava';
 
-            // Luz fija y brillante en superficie
-            ambientLight.intensity = 0.55;
-            starlight.intensity = 0.5;
-            starlight.color.setHex(0xbfd8ff);
-            sunLight.intensity = 5.0;
+            const fogColor = _fogColor.setHex(closestPlanet.color).multiplyScalar(0.7);
+            if (closestPlanet.biome === 'Terran') fogColor.setHex(0x6eb6ff);
+            if (closestPlanet.biome === 'Toxic') fogColor.lerp(_toxicFogTint, 0.25);
+            if (isLava) {
+              // Bruma oscura / ceniza — no cielo rojo solido
+              fogColor.setRGB(0.07, 0.035, 0.025).lerp(_lavaFogTint, 0.18);
+            }
+
+            const fogNear = THREE.MathUtils.lerp(
+              closestPlanet.radius * (isLava ? 0.04 : 0.15),
+              isLava ? 400 : 800,
+              blend
+            );
+            const fogFar = THREE.MathUtils.lerp(
+              closestPlanet.radius * (isLava ? 0.55 : 1.6),
+              isLava ? 28000 : 70000,
+              blend
+            );
+
+            _atmoFog.color.copy(fogColor);
+            _atmoFog.near = fogNear;
+            _atmoFog.far = fogFar;
+            scene.fog = _atmoFog;
+
+            if (isLava) {
+              // Cielo casi negro con tinte calido; estrellas visibles
+              scene.background = _atmoBackground.setRGB(0.02, 0.01, 0.008);
+              setStarFieldOpacity(THREE.MathUtils.lerp(0.55, 0.2, blend));
+              ambientLight.intensity = 0.28;
+              ambientLight.color.setHex(0xffaa88);
+              starlight.intensity = 0.22;
+              starlight.color.setHex(0xffc8a0);
+              sunLight.intensity = 6.2;
+              sunLight.color.setHex(0xffe0c0);
+              renderer.toneMappingExposure = 1.05;
+            } else {
+              scene.background = _atmoBackground.copy(fogColor).multiplyScalar(0.85 + blend * 0.15);
+              setStarFieldOpacity(1.0 - blend);
+              ambientLight.intensity = 0.55;
+              ambientLight.color.setHex(0xffffff);
+              starlight.intensity = 0.5;
+              starlight.color.setHex(0xbfd8ff);
+              sunLight.intensity = 5.0;
+              sunLight.color.setHex(0xffffff);
+              renderer.toneMappingExposure = 1.15;
+            }
         } else {
             scene.fog = null;
-            scene.background = new THREE.Color(0x000000);
+            scene.background = _deepSpaceColor;
             setStarFieldOpacity(1.0);
-            ambientLight.intensity = 0.5;
-            starlight.intensity = 0.45;
-            starlight.color.setHex(0xbfd8ff);
-            sunLight.intensity = 5.0;
+            ambientLight.intensity = 0.48;
+            ambientLight.color.setHex(0xffffff);
+            starlight.intensity = 0.42;
+            starlight.color.setHex(0xc8dcff);
+            sunLight.intensity = 5.5;
+            sunLight.color.setHex(0xffffff);
+            renderer.toneMappingExposure = 1.15;
         }
-
-        const nearSurface = alt < closestPlanet.radius * 0.08;
-        weatherSystem.update(delta, camera, {
-          inAtmo: alt < atmLimit,
-          altitude: alt,
-          biome: closestPlanet.biome,
-          nearSurface,
-          onFoot: !!spaceship.onFoot || surfaceWalker.active
-        });
-        immersionWeather = weatherSystem.intensity;
     } else {
         scene.fog = null;
-        scene.background = new THREE.Color(0x000000);
+        scene.background = _deepSpaceColor;
         setStarFieldOpacity(1.0);
-        weatherSystem.update(delta, camera, { inAtmo: false });
+        ambientLight.intensity = 0.48;
+        ambientLight.color.setHex(0xffffff);
+        starlight.intensity = 0.42;
+        sunLight.intensity = 5.5;
+        sunLight.color.setHex(0xffffff);
+        renderer.toneMappingExposure = 1.15;
+    }
+
+    // El texto DOM no necesita refrescarse a 60 Hz.
+    if (time - lastHudTick > 0.2) {
+      lastHudTick = time;
+      updateLocationHud(closestPlanet, minDist);
     }
 
     // Ambiente sonoro (throttle ~5Hz — no saturar el audio thread)
@@ -1506,52 +1724,232 @@ function animate() {
         flameScale: spaceship.flameScale || 0,
         biome: closestPlanet?.biome || 'Terran',
         altitude: altAudio,
-        weather: immersionWeather
+        weather: 0
       });
     }
 
-    renderScene.camera = camera;
-    composer.render();
+    // El bloom fullscreen se activaba justo al entrar en la atmósfera y
+    // duplicaba el coste de render cuando el LOD también estaba cargando.
+    // Los materiales emisivos siguen brillando con tone mapping sin bloquear.
+    renderer.render(scene, camera);
   } else {
     shipMarker.visible = true;
 
     // Update ship marker position to match spaceship
     shipMarker.position.copy(spaceship.mesh.position);
 
-    // In map mode, LOD doesn't need high detail updates
-    renderScene.camera = mapCamera;
-    composer.render();
+    renderer.render(scene, mapCamera);
   }
 
   // HUD Local Surface Minimap (hover o a pie)
-  if (!isMapMode && spaceship.mode === 'HOVER' && spaceship.hoverPlanet) {
-    document.getElementById('minimap-border').style.display = 'block';
+  const showSurfaceRadar = !isMapMode
+    && spaceship.hoverPlanet
+    && (spaceship.mode === 'HOVER' || spaceship.onFoot || surfaceWalker.active);
 
-    const focusPos = surfaceWalker.active
-      ? surfaceWalker.getWorldPosition(new THREE.Vector3())
-      : spaceship.mesh.position;
-    const surfaceNormal = new THREE.Vector3().subVectors(focusPos, spaceship.hoverPlanet.group.position).normalize();
-    localMapCamera.position.copy(focusPos).add(surfaceNormal.clone().multiplyScalar(20000));
-    localMapCamera.lookAt(focusPos);
+  if (showSurfaceRadar) {
+    if (minimapBorderEl) minimapBorderEl.style.display = 'block';
 
-    const forward = surfaceWalker.active
-      ? surfaceWalker._fwd.clone().applyQuaternion(spaceship.hoverPlanet.group.quaternion).normalize()
-      : new THREE.Vector3(0, 0, -1).applyQuaternion(spaceship.mesh.quaternion).normalize();
-    localMapCamera.up.copy(forward);
+    // Radar 2D persistente: evita renderizar toda la escena por segunda vez.
+    if (time - lastLocalMapRender > 0.1) {
+      lastLocalMapRender = time;
+      if (surfaceWalker.active) {
+        _localMapForward.copy(surfaceWalker._fwd);
+      } else {
+        _localMapForward.set(0, 0, -1).applyQuaternion(spaceship.mesh.quaternion).normalize();
+      }
+      if (surfaceRadarCtx) {
+        const ctx = surfaceRadarCtx;
+        const W = 250;
+        const cx = 125;
+        const cy = 125;
+        ctx.clearRect(0, 0, W, W);
+        ctx.fillStyle = 'rgba(0, 18, 28, 0.92)';
+        ctx.fillRect(0, 0, W, W);
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.28)';
+        ctx.lineWidth = 1;
+        for (const r of [42, 82, 120]) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.moveTo(cx, 5); ctx.lineTo(cx, 245);
+        ctx.moveTo(5, cy); ctx.lineTo(245, cy);
+        ctx.stroke();
 
-    const size = 250; // Map size from CSS
-    // Setup scissor test to only render in the top right corner
-    renderer.setScissorTest(true);
-    renderer.setViewport(window.innerWidth - size - 20, window.innerHeight - size - 20, size, size);
-    renderer.setScissor(window.innerWidth - size - 20, window.innerHeight - size - 20, size, size);
+        // Rumbo-arriba: flecha fija; el mundo gira alrededor
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.fillStyle = '#7ffcff';
+        ctx.beginPath();
+        ctx.moveTo(0, -32);
+        ctx.lineTo(11, 14);
+        ctx.lineTo(0, 8);
+        ctx.lineTo(-11, 14);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
 
-    renderer.render(scene, localMapCamera);
+        // Serpiente de lava en Mercurio
+        const hp = spaceship.hoverPlanet;
+        if (lavaDragonFauna && hp?.biome === 'Lava' && hp?.name === 'Mercurio') {
+          const focusPos = (surfaceWalker.active && surfaceWalker.root)
+            ? surfaceWalker.root.position
+            : spaceship.mesh.position;
+          _radarPlayerLocal.copy(focusPos);
+          hp.group.worldToLocal(_radarPlayerLocal);
+          _radarUp.copy(_radarPlayerLocal).normalize();
 
-    // Restore viewport for the next frame
-    renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+          _radarInv.copy(hp.group.matrixWorld).invert();
+          _radarFwd.copy(_localMapForward).transformDirection(_radarInv);
+          _radarFwd.addScaledVector(_radarUp, -_radarFwd.dot(_radarUp));
+          if (_radarFwd.lengthSq() < 1e-8) {
+            _radarFwd.set(0, 0, -1).transformDirection(_radarInv);
+            _radarFwd.addScaledVector(_radarUp, -_radarFwd.dot(_radarUp));
+          }
+          _radarFwd.normalize();
+          _radarRight.crossVectors(_radarFwd, _radarUp).normalize();
+
+          const markers = lavaDragonFauna.getRadarMarkers();
+          const pulse = 0.55 + 0.45 * Math.sin(time * 6);
+          for (const m of markers) {
+            _radarDelta.copy(m.local).sub(_radarPlayerLocal);
+            _radarDelta.addScaledVector(_radarUp, -_radarDelta.dot(_radarUp));
+            const dist = _radarDelta.length();
+            const east = _radarDelta.dot(_radarRight);
+            const north = _radarDelta.dot(_radarFwd);
+            let px = cx + (east / RADAR_RANGE) * 120;
+            let py = cy - (north / RADAR_RANGE) * 120;
+            const dx = px - cx;
+            const dy = py - cy;
+            const rMax = 118;
+            const r2 = dx * dx + dy * dy;
+            let onEdge = false;
+            if (r2 > rMax * rMax) {
+              const r = Math.sqrt(r2) || 1;
+              px = cx + (dx / r) * rMax;
+              py = cy + (dy / r) * rMax;
+              onEdge = true;
+            }
+
+            const col = m.submerged
+              ? `rgba(255,160,70,${0.45 + pulse * 0.35})`
+              : `rgba(255,70,30,${0.85 + pulse * 0.15})`;
+            ctx.fillStyle = col;
+            ctx.strokeStyle = '#ffe0a0';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            const markR = onEdge ? 9 : (dist < 600 ? 11 : 8);
+            if (onEdge) {
+              const ang = Math.atan2(dy, dx);
+              ctx.save();
+              ctx.translate(px, py);
+              ctx.rotate(ang);
+              ctx.moveTo(12, 0);
+              ctx.lineTo(-7, 8);
+              ctx.lineTo(-7, -8);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+              ctx.restore();
+            } else {
+              ctx.moveTo(px, py - markR);
+              ctx.lineTo(px + markR * 0.85, py);
+              ctx.lineTo(px, py + markR);
+              ctx.lineTo(px - markR * 0.85, py);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+              // Anillo para que no se pierda cerca del centro
+              ctx.beginPath();
+              ctx.arc(px, py, markR + 5, 0, Math.PI * 2);
+              ctx.strokeStyle = `rgba(255,180,80,${0.35 + pulse * 0.25})`;
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            }
+
+            // Distancia SIEMPRE (para guiarte); nombre solo si no está encima)
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffddaa';
+            ctx.font = 'bold 11px monospace';
+            ctx.fillText(`${Math.round(dist)}m`, px, py + markR + 14);
+            if (dist >= DRAGON_RADAR_LABEL_DIST) {
+              ctx.fillStyle = '#ffb080';
+              ctx.font = 'bold 10px monospace';
+              const label = m.submerged ? 'SERPIENTE ↓' : 'SERPIENTE';
+              ctx.fillText(label, px, py - markR - 8);
+            }
+          }
+        }
+      }
+    }
   } else {
-    document.getElementById('minimap-border').style.display = 'none';
+    if (minimapBorderEl) minimapBorderEl.style.display = 'none';
+  }
+
+  // Guía en pantalla: solo lejos (cerca ya la ves)
+  {
+    const dragonMarker = document.getElementById('dragon-marker');
+    const dragonDistEl = document.getElementById('dragon-distance');
+    const hp = spaceship.hoverPlanet;
+    const guideOk = !isMapMode
+      && lavaDragonFauna
+      && hp?.biome === 'Lava'
+      && hp?.name === 'Mercurio'
+      && (spaceship.mode === 'HOVER' || spaceship.onFoot || surfaceWalker.active);
+
+    let shown = false;
+    if (guideOk && dragonMarker) {
+      const markers = lavaDragonFauna.getRadarMarkers();
+      if (markers.length) {
+        const m = markers[0];
+        _radarWorld.copy(m.local);
+        hp.group.localToWorld(_radarWorld);
+        const focusPos = (surfaceWalker.active && surfaceWalker.root)
+          ? surfaceWalker.root.position
+          : spaceship.mesh.position;
+        // Distancia sobre superficie (igual que el radar), no 3D cruda
+        _radarPlayerLocal.copy(focusPos);
+        hp.group.worldToLocal(_radarPlayerLocal);
+        _radarUp.copy(_radarPlayerLocal).normalize();
+        _radarDelta.copy(m.local).sub(_radarPlayerLocal);
+        _radarDelta.addScaledVector(_radarUp, -_radarDelta.dot(_radarUp));
+        const dist = _radarDelta.length();
+
+        if (dist >= DRAGON_GUIDE_MIN_DIST) {
+          if (dragonDistEl) {
+            dragonDistEl.innerText = m.submerged
+              ? `${Math.round(dist)}m · bajo lava`
+              : `${Math.round(dist)}m`;
+          }
+
+          const ndc = _radarWorld.clone().project(camera);
+          const behind = ndc.z > 1;
+          let x = (ndc.x * 0.5 + 0.5) * window.innerWidth;
+          let y = (ndc.y * -0.5 + 0.5) * window.innerHeight;
+          const pad = 36;
+          if (behind || x < pad || x > window.innerWidth - pad || y < pad || y > window.innerHeight - pad) {
+            const cx = window.innerWidth * 0.5;
+            const cy = window.innerHeight * 0.5;
+            let dx = ndc.x;
+            let dy = -ndc.y;
+            if (behind) { dx = -dx; dy = -dy; }
+            const len = Math.hypot(dx, dy) || 1;
+            dx /= len; dy /= len;
+            const rx = (window.innerWidth * 0.5) - pad;
+            const ry = (window.innerHeight * 0.5) - pad;
+            const scale = Math.min(rx / Math.abs(dx || 1e-6), ry / Math.abs(dy || 1e-6));
+            x = cx + dx * scale;
+            y = cy + dy * scale;
+          }
+          dragonMarker.style.display = 'block';
+          dragonMarker.style.left = `${x}px`;
+          dragonMarker.style.top = `${y}px`;
+          shown = true;
+        }
+      }
+    }
+    if (dragonMarker && !shown) dragonMarker.style.display = 'none';
   }
 
   // Update Map Mode Selection Ring
@@ -1606,7 +2004,13 @@ btnEngage.addEventListener('click', () => {
       
       // If we are in the map, auto-close the map so they see the flight!
       if (isMapMode) {
-        restoreMapVisibility();
+        if (galaxyGroup.visible) {
+          scene.children.forEach(child => {
+            if (child !== galaxyGroup && child.userData.wasVisible !== undefined) {
+              child.visible = child.userData.wasVisible;
+            }
+          });
+        }
         
         isMapMode = false;
         document.body.requestPointerLock();
@@ -1735,5 +2139,9 @@ function updateNavComputer() {
 
 // Initial populate
 updateNavComputer();
+
+window.addEventListener('beforeunload', () => {
+  if (!spaceship.isDead) saveShipPose();
+});
 
 animate();
