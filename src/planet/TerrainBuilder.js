@@ -556,6 +556,24 @@ export class TerrainBuilder {
     return new THREE.Mesh(geometry, material);
   }
 
+  /**
+   * Intensidad de lava jugable (0..1) según profundidad del magma.
+   * 0 = roca / ceniza; costa caliente suave; 1 = charco profundo.
+   */
+  static getLavaIntensity(normalizedVertex, baseRadius, biome = 'Terran') {
+    if (biome !== 'Lava') return 0;
+    const h = TerrainBuilder.getHeight(normalizedVertex, baseRadius, biome, false);
+    const elev = h - baseRadius;
+    // Alineado con colores del shader (shore ~-8…-55, deep más abajo)
+    if (elev >= -8) return 0;
+    if (elev >= -40) {
+      const t = (-8 - elev) / 32; // 0 en -8 → 1 en -40
+      return 0.12 + t * t * 0.43; // costa: 0.12…0.55
+    }
+    const deep = Math.min(1, (-40 - elev) / 100); // -40 → 0, -140 → 1
+    return 0.55 + deep * 0.45;
+  }
+
   // Exposed so Spaceship can do collision detection exactly matching the procedural mesh
   static getHeight(normalizedVertex, baseRadius, biome = 'Terran', clampWater = false) {
     if (biome === 'GasGiant') return baseRadius; // Gas Giants are smooth spheres!

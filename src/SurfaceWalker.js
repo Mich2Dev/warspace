@@ -522,6 +522,25 @@ export class SurfaceWalker {
     this.camera.position.add(this._syncDelta);
   }
 
+  /** Quemadura según intensidad del magma bajo los pies. */
+  _applyLavaHazard(dt) {
+    if (!this.planet || this.planet.biome !== 'Lava') return;
+    const ship = this.ship;
+    if (!ship || typeof ship.applyLavaBurn !== 'function') return;
+    const heat = TerrainBuilder.getLavaIntensity(
+      this._localDir,
+      this.planet.radius,
+      this.planet.biome
+    );
+    if (heat <= 0.02) return;
+    // En el aire encima del charco: menos, pero el calor sigue
+    let exposure = heat;
+    if (!this.grounded) {
+      exposure *= this.verticalOffset > 80 ? 0.15 : 0.45;
+    }
+    ship.applyLavaBurn(exposure, dt);
+  }
+
   /**
    * Mezcla Idle/Walk/Run por velocidad real y añade matices encima de los
    * clips (inclinación de torso, cabeza estabilizada, piernas en el salto).
@@ -757,6 +776,7 @@ export class SurfaceWalker {
 
     this._orientCharacter(this._faceFwd, up);
     this._animatePilot(dt, moving, running);
+    this._applyLavaHazard(dt);
 
     const targetFov = running ? 64 : (moving ? 61 : 60);
     const nextFov = THREE.MathUtils.damp(this.camera.fov, targetFov, 6, dt);

@@ -26,6 +26,7 @@ const ATTACK_HIT_AT = 0.48;
 const ATTACK_TELEGRAPH_AT = 0.28;
 const SPIT_FIRE_AT = 0.28;
 const SPIT_MIN_RANGE = 3200;
+const WORM_MAX_HP = 100;
 
 /**
  * Dragón de lava en Mercurio: peso, magma, Attack/Spit con rango real.
@@ -76,6 +77,16 @@ export class PlanetLavaDragon {
     this._stuckTime = 0;
     this._lastPos = new THREE.Vector3();
     this._diveCooldown = 8 + Math.random() * 6;
+
+    // Vida / necesidades (cura en magma, se gasta combatiendo)
+    this.maxHp = WORM_MAX_HP;
+    this.hp = this.maxHp;
+    this._needHeat = 0;     // ganas de lava 0..1
+    this._huntUrge = 0;     // ganas de cazar
+    this._restUrge = 0.2;   // merodear / idle
+    this._caution = 0;      // retirarse a curar
+    this._whim = this.seed * 0.31; // ruido orgánico de personalidad
+    this._soakT = 0;        // tiempo remojándose en superficie lava
 
     this._vert = 0;
     this._vertVel = 0;
@@ -144,6 +155,59 @@ export class PlanetLavaDragon {
 
   _notifyHit(amount, kind = 'bite') {
     if (typeof this.onPlayerHit === 'function') this.onPlayerHit(amount, kind);
+  }
+
+  /** Calor del suelo bajo una dirección (0..1). */
+  _lavaHeat(dir) {
+    return TerrainBuilder.getLavaIntensity(dir, this.planetRadius, this.biome);
+  }
+
+  _wound(amount) {
+    this.hp = Math.max(0, this.hp - amount);
+  }
+
+  /**
+   * Regeneración en magma. rateMul: 1 sumergido, ~0.35 caminando por charco.
+   */
+  _healInLava(dt, rateMul = 1) {
+    if (this.hp >= this.maxHp) return;
+    const heat = this._lavaHeat(this._headDir);
+    if (heat < 0.08) return;
+    const pps = (10 + heat * 28) * rateMul; // ~10–38 HP/s sumergido
+    this.hp = Math.min(this.maxHp, this.hp + pps * dt);
+  }
+
+  /** Impulsos actuales según entorno + estado del cuerpo. */
+  _updateDrives(dt, dist, onSurface) {
+    this._whim += dt * (0.35 + 0.25 * Math.sin(this._mood * 0.27 + this.seed));
+    const hurt = 1 - this.hp / this.maxHp;
+    const near = onSurface && dist < this._awareFar;
+    const close = onSurface && dist < this._awareNear;
+
+    // Siempre le gusta el magma un poco; herido lo necesita
+    const baskWhim = 0.08 + 0.12 * (0.5 + 0.5 * Math.sin(this._whim));
+    this._needHeat = THREE.MathUtils.damp(
+      this._needHeat,
+      Math.min(1, hurt * 1.15 + baskWhim * (1 - this._interest * 0.5)),
+      1.2,
+      dt
+    );
+
+    const huntTarget = near
+      ? THREE.MathUtils.clamp(this._interest * (0.35 + 0.65 * (this.hp / this.maxHp)), 0, 1)
+      : 0.05 * Math.max(0, Math.sin(this._whim * 0.7));
+    this._huntUrge = THREE.MathUtils.damp(this._huntUrge, huntTarget, 1.5, dt);
+
+    this._caution = THREE.MathUtils.damp(
+      this._caution,
+      close && hurt > 0.4 ? hurt * this._interest : hurt * 0.25,
+      1.8,
+      dt
+    );
+
+    const restTarget = (1 - this._interest) * (0.25 + 0.35 * (0.5 + 0.5 * Math.sin(this._mood * 0.4)))
+      + (hurt < 0.15 ? 0.15 : 0);
+    this._restUrge = THREE.MathUtils.damp(this._restUrge, restTarget, 1.1, dt);
   }
 
   _makeSplash() {
@@ -346,6 +410,7 @@ export class PlanetLavaDragon {
       hitRadius: 220,
       onHit: () => {
         this._notifyHit(12, 'lava');
+        this._wound(4);
         this._triggerSplash(this._tmp2.copy(this._breathTarget).normalize(), 0.4, this._breathTarget);
       }
     });
@@ -372,7 +437,7 @@ export class PlanetLavaDragon {
   }
 
   _isLava(dir) {
-    return !this._isRock(dir);
+    return this._lavaHeat(dir) >= 0.35 || this._height(dir) - this.planetRadius <= -40;
   }
 
   /** Roca caminable: no lava y pendiente razonable desde `from`. */
@@ -564,11 +629,13 @@ export class PlanetLavaDragon {
     } else if (state === STATES.SUBMERGED) {
       this.dragon.setIntent('burrow');
       this._speedMul = 0;
-      this._subT = 1.6 + Math.random() * 1.2;
+      // Se queda bajo el magma hasta curarse (o un capricho de salir)
+      const hurt = 1 - this.hp / this.maxHp;
+      this._subT = 1.4 + hurt * 3.8 + Math.random() * 0.8;
       this.root.visible = false;
       this._vert = -this.dragon.height * 0.8;
-      const out = this._findLavaNear(this._lavaTarget, 50, 0.02, 0.1)
-        || this._findLavaNear(this._headDir, 50, 0.015, 0.08)
+      const out = this._findHottestLavaNear(this._lavaTarget, 50, 0.02, 0.1)
+        || this._findHottestLavaNear(this._headDir, 50, 0.015, 0.08)
         || this._lavaTarget.clone();
       this._emergeDir.copy(out);
     } else if (state === STATES.EMERGE) {
@@ -592,7 +659,9 @@ export class PlanetLavaDragon {
       this._orientRoot(this._fwd, 0);
       this._snapToSurface(this._headDir);
       this._emergeSplashed = false;
-      this._diveCooldown = 18 + Math.random() * 12;
+      // Herido vuelve antes al magma; sano se toma su tiempo
+      const hurt = 1 - this.hp / this.maxHp;
+      this._diveCooldown = (10 + Math.random() * 8) * (1 - hurt * 0.65);
     } else {
       this.dragon.setIntent('move');
       this._speedMul = 0.5 + Math.random() * 0.35;
@@ -601,25 +670,36 @@ export class PlanetLavaDragon {
   }
 
   _findAndSetLavaTarget() {
-    const lava = this._findLavaNear(this._headDir, 48, 0.006, 0.06);
+    const lava = this._findHottestLavaNear(this._headDir, 56, 0.005, 0.075);
     if (!lava) return false;
     this._lavaTarget.copy(lava);
     return true;
   }
 
   _findLavaNear(from, tries, minArc, maxArc) {
+    return this._findHottestLavaNear(from, tries, minArc, maxArc, 0.08);
+  }
+
+  /** Busca el charco más caliente cerca (consciente del entorno). */
+  _findHottestLavaNear(from, tries, minArc, maxArc, minHeat = 0.12) {
     this._up.copy(from).normalize();
     this._buildTangent();
+    let best = null;
+    let bestHeat = minHeat;
     for (let i = 0; i < tries; i++) {
-      const ang = this.seed + i * 1.7 + i * i * 0.05;
+      const ang = this.seed + i * 1.7 + i * i * 0.05 + this._whim * 0.3;
       const arc = minArc + (maxArc - minArc) * ((i % 7) / 6);
       const dir = from.clone().normalize()
         .addScaledVector(this._fwd, Math.cos(ang) * arc)
         .addScaledVector(this._right, Math.sin(ang) * arc)
         .normalize();
-      if (this._isLava(dir)) return dir;
+      const heat = this._lavaHeat(dir);
+      if (heat > bestHeat) {
+        bestHeat = heat;
+        best = dir;
+      }
     }
-    return null;
+    return best;
   }
 
   _findShoreNear(lavaDir) {
@@ -668,11 +748,21 @@ export class PlanetLavaDragon {
     }
 
     if (this._state === STATES.SUBMERGED) {
+      this._healInLava(dt, 1.15);
       this._subT -= dt;
+      // Deriva lenta hacia magma más caliente (nadando bajo tierra)
+      if (Math.random() < 0.04) {
+        const hotter = this._findHottestLavaNear(this._headDir, 18, 0.004, 0.03, 0.2);
+        if (hotter) this._headDir.lerp(hotter, 0.35).normalize();
+      } else {
+        this._headDir.addScaledVector(this._lavaTarget, 0.002).normalize();
+      }
       this.dragon.update(dt, 0.2, 0, { lockLocomotion: true });
       this._updateProjectiles(dt, camLocal);
       const finished = this.dragon.consumeFinished();
-      if (this._subT <= 0 || finished === 'Burrow' || finished === 'JumpArc') {
+      const healedEnough = this.hp >= this.maxHp * 0.92 && this._subT < 1.2;
+      const whimLeave = this.hp > this.maxHp * 0.7 && Math.sin(this._whim * 2.1) > 0.85 && this._subT < 0.8;
+      if (this._subT <= 0 || healedEnough || whimLeave || finished === 'Burrow' || finished === 'JumpArc') {
         this._enter(STATES.EMERGE, 4);
       }
       return;
@@ -696,6 +786,22 @@ export class PlanetLavaDragon {
       const sense = this._playerSense(camLocal);
       dist = sense.dist;
       onSurface = sense.onSurface;
+    }
+
+    this._updateDrives(dt, dist, onSurface);
+
+    // Remojarse / curar si ya pisa magma (busca charco o cruza costa)
+    const footHeat = this._lavaHeat(this._headDir);
+    if (footHeat > 0.12 && this._state !== STATES.DIVE && this._state !== STATES.EMERGE) {
+      this._healInLava(dt, 0.4 + footHeat * 0.35);
+      this._soakT += dt;
+    } else {
+      this._soakT = Math.max(0, this._soakT - dt * 0.5);
+    }
+
+    // Combate gasta al gusano (por eso busca lava después)
+    if (this._state === STATES.THREAT || this._pendingSpit || this._pendingAttack) {
+      this._wound((1.8 + this._interest * 1.2) * dt);
     }
 
     if (this._state === STATES.DIVE) {
@@ -898,8 +1004,10 @@ export class PlanetLavaDragon {
         if (reach <= this._biteReach) {
           this._triggerSplash(this._headDir, 1.4, aimPt);
           this._notifyHit(22, 'bite');
+          this._wound(6);
         } else {
           this._triggerSplash(this._headDir, 0.65, muzzle);
+          this._wound(2);
         }
       }
       if (finished === 'Attack' || (clip !== 'Attack' && this._attackLunged)) {
@@ -970,6 +1078,7 @@ export class PlanetLavaDragon {
       this._diveSplashed = true;
       this._triggerSplash(this._headDir, 0.95, this.root.position);
     }
+    this._healInLava(dt, 0.55 + this._diveProgress * 0.5);
 
     this._up.copy(this._headDir);
     this._snapToSurface(this._headDir);
@@ -1036,6 +1145,9 @@ export class PlanetLavaDragon {
 
   _think(dt, dist, camLocal, onSurface) {
     const aware = !!(camLocal && onSurface && dist < this._awareFar);
+    const busy = this._state === STATES.DIVE
+      || this._state === STATES.SUBMERGED
+      || this._state === STATES.EMERGE;
 
     if (aware) {
       const target = dist < this._awareNear ? 1
@@ -1044,72 +1156,111 @@ export class PlanetLavaDragon {
       this._interest = THREE.MathUtils.damp(this._interest, target, 1.4, dt);
     } else {
       this._interest = THREE.MathUtils.damp(this._interest, 0, 1.6, dt);
-      // Si estaba amenazando y el jugador se fue / voló, volver a merodear
-      if (this._state === STATES.THREAT || this._state === STATES.APPROACH
-        || this._state === STATES.NOTICE || this._state === STATES.FLEE) {
-        if (this._interest < 0.15) {
+      if ((this._state === STATES.THREAT || this._state === STATES.APPROACH
+        || this._state === STATES.NOTICE || this._state === STATES.FLEE)
+        && this._interest < 0.15) {
+        this._pendingSpit = false;
+        this._enter(STATES.WANDER, 5 + Math.random() * 4);
+        return;
+      }
+    }
+
+    if (busy) return;
+
+    const footHeat = this._lavaHeat(this._headDir);
+    const wantBath = this._needHeat > 0.42 || this._caution > 0.55;
+    const canDive = this._diveCooldown <= 0;
+
+    // Ya está sobre magma caliente y lo necesita → sumergirse (no “timer random”)
+    if (wantBath && footHeat > 0.45 && canDive
+      && this._state !== STATES.SEEK_LAVA && this._state !== STATES.THREAT) {
+      this._lavaTarget.copy(this._headDir);
+      this._enter(STATES.DIVE, 4);
+      return;
+    }
+
+    // Herido / con ganas de calor: ir al charco (incluso interrumpe amenaza si está mal)
+    if (wantBath && canDive
+      && this._state !== STATES.SEEK_LAVA) {
+      const desperate = this.hp < this.maxHp * 0.45 || this._caution > 0.7;
+      const casual = this._needHeat > 0.55 && this._huntUrge < 0.4
+        && Math.sin(this._whim + this._mood * 0.2) > 0.15;
+      if (desperate || (casual && this._stateT < 0.4)) {
+        if (this._findAndSetLavaTarget()) {
           this._pendingSpit = false;
-          this._enter(STATES.WANDER, 5 + Math.random() * 4);
+          this._pendingAttack = false;
+          this._enter(STATES.SEEK_LAVA, 10);
           return;
         }
       }
     }
 
-    // Huida a lava solo si el jugador está realmente encima (superficie)
-    if (aware && dist < this._awareNear * 0.45 && this._diveCooldown <= 0
-      && this._state !== STATES.DIVE && this._state !== STATES.SEEK_LAVA
-      && this._state !== STATES.THREAT) {
-      if (this._interest > 0.85 && Math.random() < 0.015) {
-        this._enter(STATES.SEEK_LAVA, 8);
+    // Buscando lava: si llega al charco, se tira
+    if (this._state === STATES.SEEK_LAVA) {
+      if (footHeat > 0.4 || this._isLava(this._headDir)) {
+        this._enter(STATES.DIVE, 4);
         return;
       }
+      if (this._stateT <= 0) {
+        if (this._needHeat > 0.35 && this._findAndSetLavaTarget()) {
+          this._stateT = 6;
+        } else {
+          this._enter(STATES.WANDER, 4 + Math.random() * 3);
+        }
+      }
+      return;
     }
 
-    // Combate: spit desde ~3000 m; no esperar a estar encima
+    // Cazar: spit / amenaza cuando puede y no está desesperado por curarse
     if (aware && dist <= this._spitRange
-      && this._state !== STATES.FLEE && this._state !== STATES.THREAT
-      && this._state !== STATES.SEEK_LAVA && this._state !== STATES.DIVE
-      && this._state !== STATES.SUBMERGED && this._state !== STATES.EMERGE) {
-      if (this._interest > 0.4) {
-        this._enter(STATES.THREAT, 3.5 + Math.random() * 2);
-        return;
-      }
-    }
-
-    if (aware && dist < this._awareNear * 0.55 && dist > this._spitRange
+      && this._huntUrge > 0.38 && this._caution < 0.65
       && this._state !== STATES.FLEE && this._state !== STATES.THREAT
       && this._state !== STATES.SEEK_LAVA) {
-      if (this._interest > 0.8 && this._stateT < 0.15 && Math.random() < 0.2) {
-        this._enter(STATES.FLEE, 2 + Math.random() * 1.5);
-        return;
-      }
+      this._enter(STATES.THREAT, 3.2 + this._huntUrge * 2.2);
+      return;
+    }
+
+    // Demasiado cerca y aún sano: a veces se retrae un poco (no huida robótica fija)
+    if (aware && dist < this._awareNear * 0.4 && this._huntUrge < 0.35
+      && this._state !== STATES.FLEE && this._state !== STATES.THREAT
+      && this._stateT < 0.2 && Math.sin(this._whim * 1.3) > 0.7) {
+      this._enter(STATES.FLEE, 1.6 + Math.random());
+      return;
     }
 
     if (this._stateT > 0) return;
 
-    const roll = Math.random();
+    // Merodeo orgánico según el impulso más fuerte
+    const bath = this._needHeat * (0.85 + 0.15 * Math.sin(this._whim));
+    const hunt = this._huntUrge * (0.9 + 0.1 * Math.sin(this._mood));
+    const rest = this._restUrge;
 
-    if (this._diveCooldown <= 0 && roll < 0.07) {
-      this._enter(STATES.SEEK_LAVA, 9);
+    if (bath > hunt && bath > rest && bath > 0.38 && canDive) {
+      if (this._findAndSetLavaTarget()) {
+        this._enter(STATES.SEEK_LAVA, 9);
+        return;
+      }
+    }
+
+    if (aware && hunt > rest && dist <= this._spitRange && this._caution < 0.5) {
+      this._enter(STATES.THREAT, 2.8 + Math.random() * 1.5);
       return;
     }
 
-    if (aware && dist <= this._spitRange && this._interest > 0.35 && roll < 0.35) {
-      this._enter(STATES.THREAT, 3 + Math.random() * 1.5);
+    if (aware && hunt > 0.3 && dist < this._awareMid) {
+      if (Math.sin(this._whim * 0.9) > 0.25) {
+        this._enter(STATES.APPROACH, 2.5 + Math.random() * 2);
+      } else {
+        this._enter(STATES.NOTICE, 1.8 + Math.random() * 1.5);
+      }
       return;
     }
 
-    if (aware && dist < this._awareMid && this._interest > 0.35 && roll < 0.28) {
-      if (roll < 0.12) this._enter(STATES.NOTICE, 2 + Math.random() * 1.5);
-      else this._enter(STATES.APPROACH, 2.5 + Math.random() * 2);
-      return;
-    }
-
-    if (roll < 0.14) {
-      this._enter(STATES.IDLE, 1.8 + Math.random() * 2.5);
+    if (rest > 0.45 || Math.sin(this._mood * 0.55 + this.seed) > 0.75) {
+      this._enter(STATES.IDLE, 1.6 + Math.random() * 2.8);
     } else {
       this._pickPatrolGoal();
-      this._enter(STATES.WANDER, 9 + Math.random() * 10);
+      this._enter(STATES.WANDER, 8 + Math.random() * 10);
       this._turnBias = (Math.random() - 0.5) * 0.22;
     }
   }
@@ -1398,7 +1549,9 @@ export class LavaDragonFaunaManager {
       out.push({
         local,
         submerged,
-        state: d._state
+        state: d._state,
+        hp: d.hp,
+        maxHp: d.maxHp
       });
     }
     return out;

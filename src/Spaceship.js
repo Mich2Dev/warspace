@@ -322,6 +322,29 @@ export class Spaceship {
           this.die();
       }
   }
+
+  /**
+   * Quemadura continua por magma (sin i-frames de combate).
+   * @param {number} intensity 0..1
+   * @param {number} dt
+   */
+  applyLavaBurn(intensity, dt) {
+      if (this.isDead || intensity <= 0.02) return;
+      const dps = 5 + intensity * 34; // costa suave → charco letal
+      this._lavaBurnAcc = (this._lavaBurnAcc || 0) + dps * dt;
+      if (this._lavaBurnAcc < 1.5) return;
+      const chunk = Math.min(12, Math.floor(this._lavaBurnAcc));
+      this._lavaBurnAcc -= chunk;
+      this.hp = Math.max(0, this.hp - chunk);
+      this.updateHealthUI();
+      const overlay = document.getElementById('damage-overlay');
+      if (overlay) {
+          overlay.style.opacity = String(0.25 + intensity * 0.55);
+          clearTimeout(this._lavaOverlayT);
+          this._lavaOverlayT = setTimeout(() => { overlay.style.opacity = '0'; }, 180);
+      }
+      if (this.hp <= 0) this.die();
+  }
   
   updateHealthUI() {
       const fill = document.getElementById('health-fill');
