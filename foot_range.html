@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Campo de tiro — personaje a pie</title>
+  <style>
+    :root {
+      --bg: #0a0e12;
+      --panel: rgba(10, 18, 26, 0.92);
+      --line: rgba(0, 220, 200, 0.45);
+      --text: #c8e8e4;
+      --accent: #00ffcc;
+      --warn: #ff9944;
+    }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+    canvas { display: block; }
+    #crosshair {
+      position: fixed; left: 50%; top: 50%; width: 16px; height: 16px;
+      transform: translate(-50%, -50%); border: 2px solid rgba(255, 140, 60, 0.75);
+      border-radius: 50%; pointer-events: none; z-index: 10;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute; background: #ff9944;
+    }
+    #crosshair::before { top: 50%; left: -5px; width: 30px; height: 2px; transform: translateY(-50%); }
+    #crosshair::after { left: 50%; top: -5px; height: 30px; width: 2px; transform: translateX(-50%); }
+    body.ads-aiming #crosshair {
+      width: 6px; height: 6px; border-color: rgba(255, 180, 80, 0.95);
+    }
+    #hud {
+      position: fixed; left: 14px; top: 14px; z-index: 20; width: min(340px, calc(100vw - 28px));
+      max-height: calc(100vh - 28px); overflow: auto; padding: 14px 16px;
+      color: var(--text); font: 12px/1.5 ui-monospace, Consolas, monospace;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      backdrop-filter: blur(8px);
+    }
+    #hud h1 {
+      margin: 0 0 6px; font-size: 14px; color: var(--accent); letter-spacing: 0.04em;
+      font-weight: 700;
+    }
+    #hud .sub { color: #7a9a98; margin-bottom: 10px; }
+    #hud kbd {
+      display: inline-block; padding: 1px 5px; border-radius: 3px;
+      background: #132028; border: 1px solid #2a4850; color: #fff; font-size: 11px;
+    }
+    #hud ul { margin: 8px 0 0; padding-left: 16px; }
+    #hud li { margin: 3px 0; }
+    #status {
+      margin-top: 12px; padding-top: 10px; border-top: 1px solid #1e3338;
+      color: var(--warn); min-height: 1.2em;
+    }
+    #weapon-hotbar { bottom: 18px !important; }
+    .click-hint {
+      position: fixed; inset: 0; z-index: 30; display: flex; align-items: center;
+      justify-content: center; background: rgba(0,0,0,0.55); color: #e8fff8;
+      font: 15px/1.4 system-ui, sans-serif; cursor: pointer;
+    }
+    .click-hint span {
+      padding: 16px 22px; border: 1px solid var(--line); border-radius: 8px;
+      background: var(--panel);
+    }
+  </style>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="crosshair" class="on-foot"></div>
+  <div id="hud">
+    <h1>CAMPO DE TIRO</h1>
+    <div class="sub">Misma lógica que el juego (<code>SurfaceWalker</code>). Esto es lo que debes juzgar — no Blender renders.</div>
+    <ul>
+      <li><kbd>Click</kbd> capturar ratón · <kbd>Esc</kbd> soltar</li>
+      <li><kbd>WASD</kbd> mover · <kbd>Shift</kbd> correr · <kbd>Espacio</kbd> saltar</li>
+      <li><kbd>Izq</kbd> disparar · <kbd>Der</kbd> ADS (apuntar)</li>
+      <li><kbd>C</kbd> inspeccionar · órbita sin girar el cuerpo · rueda zoom</li>
+      <li><kbd>1–8</kbd> armas · <kbd>Q</kbd>/<kbd>R</kbd> ciclar</li>
+      <li>Rueda · zoom cámara</li>
+    </ul>
+    <div id="status">Cargando astronauta y armas…</div>
+  </div>
+  <div class="click-hint" id="lockHint"><span>Click para capturar el ratón y probar</span></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { SurfaceWalker } from '/src/SurfaceWalker.js';
+    import { WeaponHud } from '/src/weapons/WeaponHud.js';
+    import { listWeapons } from '/src/weapons/WeaponCatalog.js';
+
+    const status = document.getElementById('status');
+    const lockHint = document.getElementById('lockHint');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0e12);
+    scene.fog = new THREE.Fog(0x0a0e12, 1200, 5500);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 20000);
+
+    scene.add(new THREE.HemisphereLight(0xffe8d8, 0x1a2030, 0.7));
+    const sun = new THREE.DirectionalLight(0xfff0e0, 1.4);
+    sun.position.set(400, 800, 200);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x6688aa, 0.35);
+    fill.position.set(-300, 200, -400);
+    scene.add(fill);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(4000, 96),
+      new THREE.MeshStandardMaterial({ color: 0x1a1612, roughness: 0.92, metalness: 0.05 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+    const grid = new THREE.GridHelper(2000, 50, 0x3a5048, 0x1e2a28);
+    grid.position.y = 0.5;
+    scene.add(grid);
+
+    // Dummies de tiro
+    const targets = new THREE.Group();
+    scene.add(targets);
+    for (let i = 0; i < 6; i++) {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(40, 90, 20),
+        new THREE.MeshStandardMaterial({ color: 0x884422, roughness: 0.7 })
+      );
+      m.position.set((i - 2.5) * 120, 45, -600 - (i % 2) * 180);
+      targets.add(m);
+    }
+
+    const walker = new SurfaceWalker(scene, camera);
+    walker.enterFlatRange();
+    // Debug / agent validation
+    window.__footRange = { walker, THREE, scene, camera };
+
+    const weaponHud = new WeaponHud({
+      getWalker: () => walker,
+      isActive: () => !!walker.active
+    });
+    walker.onWeaponChange = (payload) => {
+      weaponHud.sync(payload);
+      const def = payload?.def;
+      status.textContent = def
+        ? `Arma: ${def.name} · ${def.blurb || def.category} · ADS ${walker._ads > 0.4 ? 'ON' : 'off'}`
+        : 'Sin arma';
+    };
+    weaponHud.show();
+
+    const keys = Object.create(null);
+    const bolts = [];
+    const _origin = new THREE.Vector3();
+    const _dir = new THREE.Vector3();
+    let lastFire = 0;
+
+    // Inspección: órbita alrededor del personaje SIN girar el cuerpo
+    const inspect = {
+      on: false,
+      yaw: 0.9,
+      pitch: 0.25,
+      dist: 220,
+      targetY: 95
+    };
+    window.__footRange.inspect = inspect;
+
+    function applyInspectCamera() {
+      const p = walker.root.position;
+      const cy = Math.cos(inspect.pitch);
+      const sy = Math.sin(inspect.pitch);
+      const cx = Math.cos(inspect.yaw);
+      const sx = Math.sin(inspect.yaw);
+      const tx = p.x;
+      const ty = p.y + inspect.targetY;
+      const tz = p.z;
+      camera.position.set(
+        tx + inspect.dist * cy * sx,
+        ty + inspect.dist * sy,
+        tz + inspect.dist * cy * cx
+      );
+      camera.lookAt(tx, ty, tz);
+    }
+
+    function fire() {
+      if (!walker.active) return;
+      const def = walker.getEquippedWeapon?.() || null;
+      const rate = def?.fireRateMs ?? 180;
+      const now = performance.now();
+      if (now - lastFire < rate) return;
+      lastFire = now;
+      walker.getAimRay(_origin, _dir);
+      const geo = new THREE.CylinderGeometry(1.2, 1.2, 28, 6);
+      geo.rotateX(Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({
+        color: def?.colorHex ?? 0xff7722,
+        transparent: true,
+        opacity: 0.95
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(_origin);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), _dir.clone().normalize());
+      scene.add(mesh);
+      bolts.push({ mesh, vel: _dir.clone().multiplyScalar(def?.projectileSpeed ?? 22000), life: 1.4 });
+      walker.notifyShot?.();
+    }
+
+    lockHint.addEventListener('click', () => {
+      document.body.requestPointerLock();
+    });
+    document.addEventListener('pointerlockchange', () => {
+      lockHint.style.display = document.pointerLockElement ? 'none' : 'flex';
+    });
+
+    document.addEventListener('mousedown', (e) => {
+      if (document.pointerLockElement !== document.body) {
+        document.body.requestPointerLock();
+        return;
+      }
+      if (inspect.on) return; // en inspección no disparar / ADS
+      if (e.button === 0) fire();
+      if (e.button === 2) walker.setAds(true);
+    });
+    document.addEventListener('mouseup', (e) => {
+      if (e.button === 2) walker.setAds(false);
+    });
+    document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== document.body) return;
+      if (inspect.on) {
+        inspect.yaw -= e.movementX * 0.005;
+        inspect.pitch = Math.max(-0.2, Math.min(1.2, inspect.pitch + e.movementY * 0.004));
+        return;
+      }
+      walker.onMouseMove(e.movementX, e.movementY);
+    });
+    document.addEventListener('wheel', (e) => {
+      if (document.pointerLockElement !== document.body) return;
+      if (inspect.on) {
+        inspect.dist = Math.max(90, Math.min(480, inspect.dist + Math.sign(e.deltaY) * 18));
+        return;
+      }
+      walker.onScroll(e.deltaY);
+    }, { passive: true });
+
+    document.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+      if (!walker.active) return;
+      if (e.code === 'KeyC') {
+        e.preventDefault();
+        inspect.on = !inspect.on;
+        if (inspect.on) {
+          // Arranca la órbita desde un ¾ lateral para ver el rifle
+          inspect.yaw = walker.yaw + Math.PI * 0.55;
+          inspect.pitch = 0.28;
+          inspect.dist = Math.max(180, walker.cameraDist * 0.95);
+          walker.setAds(false);
+          status.textContent = 'INSPECCIÓN · mueve el ratón para orbitar · C para volver · rueda zoom';
+        } else {
+          status.textContent = 'Juego · el cuerpo sigue la mira otra vez';
+        }
+        return;
+      }
+      const slotMap = {
+        Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4,
+        Digit5: 5, Digit6: 6, Digit7: 7, Digit8: 8
+      };
+      if (slotMap[e.code]) {
+        e.preventDefault();
+        walker.equipWeaponSlot(slotMap[e.code]);
+      }
+      if (e.code === 'KeyQ') { e.preventDefault(); walker.cycleWeapon(-1); }
+      if (e.code === 'KeyR') { e.preventDefault(); walker.cycleWeapon(1); }
+    });
+    document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const clock = new THREE.Clock();
+    function tick() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      walker.update(dt, keys);
+
+      // Inspección: órbita fija alrededor del personaje (cuerpo quieto)
+      if (inspect.on) {
+        applyInspectCamera();
+      } else {
+        // Debug opcional: window.__footRange.freeCam = {pos, look}
+        const fc = window.__footRange?.freeCam;
+        if (fc?.pos && fc?.look) {
+          camera.position.set(fc.pos[0], fc.pos[1], fc.pos[2]);
+          camera.lookAt(fc.look[0], fc.look[1], fc.look[2]);
+        }
+      }
+
+      for (let i = bolts.length - 1; i >= 0; i--) {
+        const b = bolts[i];
+        b.life -= dt;
+        b.mesh.position.addScaledVector(b.vel, dt);
+        b.mesh.material.opacity = Math.max(0, b.life);
+        if (b.life <= 0) {
+          scene.remove(b.mesh);
+          b.mesh.geometry.dispose();
+          b.mesh.material.dispose();
+          bolts.splice(i, 1);
+        }
+      }
+
+      const def = walker.getEquippedWeapon?.();
+      if (def && !inspect.on) {
+        status.textContent =
+          `${def.name} · ADS ${walker._ads > 0.45 ? 'ON' : 'off'} · ` +
+          `armas: ${listWeapons().length} · C = inspeccionar arma`;
+      }
+      renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+    tick();
+
+    // Esperar modelo
+    const wait = setInterval(() => {
+      if (walker.model || walker.weapon) {
+        status.textContent = 'Listo — click para jugar. Esto es el personaje real del juego.';
+        clearInterval(wait);
+      }
+    }, 400);
+  </script>
+</body>
+</html>
